@@ -62,7 +62,6 @@ class _PodcastHomeScreenState extends State<PodcastHomeScreen> with SingleTicker
 
   bool _isGeneratingPodcast = false;
   String _outputBurmeseScript = '';
-  String? _generatedAudioPath;
   bool _isPodcastAudioPlaying = false;
 
   @override
@@ -166,7 +165,6 @@ class _PodcastHomeScreenState extends State<PodcastHomeScreen> with SingleTicker
 
     setState(() => _isTranscribing = true);
 
-    // Offline Transcription Buffer (Whisper Core Logic bridge)
     await Future.delayed(const Duration(seconds: 2));
 
     setState(() {
@@ -180,7 +178,7 @@ class _PodcastHomeScreenState extends State<PodcastHomeScreen> with SingleTicker
     if (_extractedTextController.text.trim().isEmpty) return;
     setState(() {
       _inputStudioTextController.text = _extractedTextController.text;
-      _tabController.animateTo(1); // Switch to Part 2 Tab
+      _tabController.animateTo(1);
     });
     ScaffoldMessenger.of(context).showSnackBar(
       const SnackBar(content: Text('စာသားကို အပိုင်း (၂) Podcast Studio သို့ ပို့ဆောင်ပြီးပါပြီ')),
@@ -188,6 +186,43 @@ class _PodcastHomeScreenState extends State<PodcastHomeScreen> with SingleTicker
   }
 
   // --- PART 2 LOGIC ---
+  // Pick .txt file from system storage
+  Future<void> _pickTxtFile() async {
+    final result = await FilePicker.platform.pickFiles(
+      type: FileType.custom,
+      allowedExtensions: ['txt'],
+    );
+
+    if (result != null && result.files.single.path != null) {
+      final file = File(result.files.single.path!);
+      final content = await file.readAsString();
+      setState(() {
+        _inputStudioTextController.text = content;
+      });
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('${result.files.single.name} ဖိုင်မှ စာသားကို ရယူပြီးပါပြီ')),
+        );
+      }
+    }
+  }
+
+  // Import directly from Part 1
+  void _importFromPart1() {
+    if (_extractedTextController.text.trim().isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('အပိုင်း (၁) တွင် မည်သည့် စာသားမှ မရှိသေးပါ')),
+      );
+      return;
+    }
+    setState(() {
+      _inputStudioTextController.text = _extractedTextController.text;
+    });
+    ScaffoldMessenger.of(context).showSnackBar(
+      const SnackBar(content: Text('အပိုင်း (၁) မှ စာသားကို ရယူပြီးပါပြီ')),
+    );
+  }
+
   Future<void> _saveAsNewDefault() async {
     final prefs = await SharedPreferences.getInstance();
     await prefs.setString('default_style', _selectedStyle);
@@ -211,7 +246,7 @@ class _PodcastHomeScreenState extends State<PodcastHomeScreen> with SingleTicker
     final inputText = _inputStudioTextController.text.trim();
     if (inputText.isEmpty) {
       ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Podcast ဖန်တီးရန် စာသား ရိုက်ထည့်ပါ သို့မဟုတ် အပိုင်း (၁) မှ ပို့ပါ')),
+        const SnackBar(content: Text('Podcast ဖန်တီးရန် စာသား ရိုက်ထည့်ပါ သို့မဟုတ် File ရွေးပါ')),
       );
       return;
     }
@@ -356,7 +391,6 @@ class _PodcastHomeScreenState extends State<PodcastHomeScreen> with SingleTicker
                     label: Text(_isTranscribing ? 'စာသားပြောင်းနေပါသည်...' : 'စာသားပြောင်းမည် (Offline STT)'),
                   ),
                   const SizedBox(height: 16),
-                  // Output extracted Text Card
                   Card(
                     color: const Color(0xFF1E1E1E),
                     shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
@@ -369,19 +403,15 @@ class _PodcastHomeScreenState extends State<PodcastHomeScreen> with SingleTicker
                             mainAxisAlignment: MainAxisAlignment.spaceBetween,
                             children: [
                               const Text('ရရှိလာသော အင်္ဂလိပ်စာသား:', style: TextStyle(fontWeight: FontWeight.bold, color: Color(0xFFC5A059))),
-                              Row(
-                                children: [
-                                  IconButton(
-                                    icon: const Icon(Icons.copy, size: 20, color: Colors.white70),
-                                    onPressed: () {
-                                      if (_extractedTextController.text.isNotEmpty) {
-                                        Clipboard.setData(ClipboardData(text: _extractedTextController.text));
-                                        ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('စာသား Copy ကူးပြီးပါပြီ')));
-                                      }
-                                    },
-                                    tooltip: 'Copy',
-                                  ),
-                                ],
+                              IconButton(
+                                icon: const Icon(Icons.copy, size: 20, color: Colors.white70),
+                                onPressed: () {
+                                  if (_extractedTextController.text.isNotEmpty) {
+                                    Clipboard.setData(ClipboardData(text: _extractedTextController.text));
+                                    ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('စာသား Copy ကူးပြီးပါပြီ')));
+                                  }
+                                },
+                                tooltip: 'Copy',
                               ),
                             ],
                           ),
@@ -423,14 +453,49 @@ class _PodcastHomeScreenState extends State<PodcastHomeScreen> with SingleTicker
                       child: Column(
                         crossAxisAlignment: CrossAxisAlignment.start,
                         children: [
-                          const Text('Input Text (စာသား ရိုက်ထည့်ပါ သို့မဟုတ် အပိုင်း ၁ မှ ယူပါ):',
+                          const Text('Input Text (စာသား ထည့်သွင်းနည်းများ):',
                               style: TextStyle(fontWeight: FontWeight.bold, color: Color(0xFFC5A059))),
+                          const SizedBox(height: 8),
+                          // 3 Import Actions Row
+                          SingleChildScrollView(
+                            scrollDirection: Axis.horizontal,
+                            child: Row(
+                              children: [
+                                ActionChip(
+                                  avatar: const Icon(Icons.file_open, size: 16, color: Color(0xFFC5A059)),
+                                  label: const Text('.txt ဖိုင် ရွေးပါ'),
+                                  backgroundColor: const Color(0xFF2A2A2A),
+                                  onPressed: _pickTxtFile,
+                                ),
+                                const SizedBox(width: 8),
+                                ActionChip(
+                                  avatar: const Icon(Icons.input, size: 16, color: Color(0xFFC5A059)),
+                                  label: const Text('အပိုင်း (၁) မှ ယူမည်'),
+                                  backgroundColor: const Color(0xFF2A2A2A),
+                                  onPressed: _importFromPart1,
+                                ),
+                                const SizedBox(width: 8),
+                                ActionChip(
+                                  avatar: const Icon(Icons.paste, size: 16, color: Color(0xFFC5A059)),
+                                  label: const Text('Paste ချမည်'),
+                                  backgroundColor: const Color(0xFF2A2A2A),
+                                  onPressed: () async {
+                                    final data = await Clipboard.getData('text/plain');
+                                    if (data != null && data.text != null) {
+                                      setState(() => _inputStudioTextController.text = data.text!);
+                                    }
+                                  },
+                                ),
+                              ],
+                            ),
+                          ),
+                          const Divider(color: Colors.white24, height: 18),
                           TextField(
                             controller: _inputStudioTextController,
                             maxLines: 5,
                             style: const TextStyle(fontSize: 14),
                             decoration: const InputDecoration(
-                              hintText: 'အင်္ဂလိပ် သို့မဟုတ် စိတ်ကြိုက်စာသားများ ဤနေရာတွင် ထည့်ပါ...',
+                              hintText: 'စာသား ရိုက်ထည့်ပါ၊ Paste ချပါ သို့မဟုတ် အပေါ်မှ ဖိုင်ရွေးပါ...',
                               border: InputBorder.none,
                             ),
                           ),
@@ -538,7 +603,11 @@ class _PodcastHomeScreenState extends State<PodcastHomeScreen> with SingleTicker
                   ),
                   const SizedBox(height: 14),
                   ElevatedButton.icon(
-                    style: ElevatedButton.styleFrom(backgroundColor: const Color(0xFFC5A059), foregroundColor: Colors.black, padding: const EdgeInsets.symmetric(vertical: 14)),
+                    style: ElevatedButton.styleFrom(
+                      backgroundColor: const Color(0xFFC5A059),
+                      foregroundColor: Colors.black,
+                      padding: const EdgeInsets.symmetric(vertical: 14),
+                    ),
                     onPressed: _isGeneratingPodcast ? null : _generatePodcast,
                     icon: _isGeneratingPodcast
                         ? const SizedBox(width: 20, height: 20, child: CircularProgressIndicator(strokeWidth: 2, color: Colors.black))
