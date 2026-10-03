@@ -1,7 +1,7 @@
 name: burmese_podcast_app
-description: "WY's PODCAST - Offline Voice & Audio Studio"
+description: "WY's PODCAST - Voice Studio"
 publish_to: "none"
-version: 1.0.0+2
+version: 1.0.0+3
 
 environment:
   sdk: ">=3.0.0 <4.0.0"
@@ -13,6 +13,7 @@ dependencies:
   audioplayers: ^6.0.0
   flutter_tts: ^4.0.2
   shared_preferences: ^2.2.2
+  http: ^1.2.0
 
 dev_dependencies:
   flutter_test:
