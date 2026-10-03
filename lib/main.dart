@@ -55,6 +55,9 @@ class _PodcastHomeScreenState extends State<PodcastHomeScreen> with SingleTicker
   final TextEditingController _inputStudioTextController = TextEditingController();
   final TextEditingController _customPromptController = TextEditingController();
   String _geminiApiKey = '';
+  
+  // Feature: AI Rewrite On/Off Switch
+  bool _enableAiRewrite = true;
   String _promptMode = 'For Point';
   String _selectedStyle = 'Podcast';
   String _selectedGender = 'Male';
@@ -62,6 +65,7 @@ class _PodcastHomeScreenState extends State<PodcastHomeScreen> with SingleTicker
 
   bool _isGeneratingPodcast = false;
   String _outputBurmeseScript = '';
+  String? _generatedAudioPath;
   bool _isPodcastAudioPlaying = false;
 
   @override
@@ -82,6 +86,7 @@ class _PodcastHomeScreenState extends State<PodcastHomeScreen> with SingleTicker
       _selectedGender = prefs.getString('default_gender') ?? 'Male';
       _speed = prefs.getDouble('default_speed') ?? 1.0;
       _promptMode = prefs.getString('default_prompt_mode') ?? 'For Point';
+      _enableAiRewrite = prefs.getBool('default_enable_ai_rewrite') ?? true;
     });
   }
 
@@ -164,7 +169,6 @@ class _PodcastHomeScreenState extends State<PodcastHomeScreen> with SingleTicker
     }
 
     setState(() => _isTranscribing = true);
-
     await Future.delayed(const Duration(seconds: 2));
 
     setState(() {
@@ -178,6 +182,7 @@ class _PodcastHomeScreenState extends State<PodcastHomeScreen> with SingleTicker
     if (_extractedTextController.text.trim().isEmpty) return;
     setState(() {
       _inputStudioTextController.text = _extractedTextController.text;
+      _enableAiRewrite = true; // Audio to text ဆိုပါက AI Rewrite ကို On ပေးခြင်း
       _tabController.animateTo(1);
     });
     ScaffoldMessenger.of(context).showSnackBar(
@@ -186,7 +191,6 @@ class _PodcastHomeScreenState extends State<PodcastHomeScreen> with SingleTicker
   }
 
   // --- PART 2 LOGIC ---
-  // Pick .txt file from system storage
   Future<void> _pickTxtFile() async {
     final result = await FilePicker.platform.pickFiles(
       type: FileType.custom,
@@ -207,7 +211,6 @@ class _PodcastHomeScreenState extends State<PodcastHomeScreen> with SingleTicker
     }
   }
 
-  // Import directly from Part 1
   void _importFromPart1() {
     if (_extractedTextController.text.trim().isEmpty) {
       ScaffoldMessenger.of(context).showSnackBar(
@@ -217,6 +220,7 @@ class _PodcastHomeScreenState extends State<PodcastHomeScreen> with SingleTicker
     }
     setState(() {
       _inputStudioTextController.text = _extractedTextController.text;
+      _enableAiRewrite = true;
     });
     ScaffoldMessenger.of(context).showSnackBar(
       const SnackBar(content: Text('အပိုင်း (၁) မှ စာသားကို ရယူပြီးပါပြီ')),
@@ -229,6 +233,7 @@ class _PodcastHomeScreenState extends State<PodcastHomeScreen> with SingleTicker
     await prefs.setString('default_gender', _selectedGender);
     await prefs.setDouble('default_speed', _speed);
     await prefs.setString('default_prompt_mode', _promptMode);
+    await prefs.setBool('default_enable_ai_rewrite', _enableAiRewrite);
 
     if (mounted) {
       ScaffoldMessenger.of(context).showSnackBar(
@@ -237,7 +242,91 @@ class _PodcastHomeScreenState extends State<PodcastHomeScreen> with SingleTicker
     }
   }
 
-  Future<void> _generatePodcast() async {
+  // Gemini API Script Generator
+  Future<String> _callGeminiPodcastScript(String rawContent) async {
+    String instruction = "";
+    if (_promptMode == 'For Point') {
+      instruction = "အောက်ပါစာသားကို နားဆင်ရလွယ်ကူပြီး စိတ်ဝင်စားဖွယ်ကောင်းသော မြန်မာ Podcast ဇာတ်ညွှန်းအဖြစ် အဓိက အချက်များ (Bullet points) သီးသန့် မြန်မာဘာသာဖြင့် ရေးသားပေးပါ:";
+    } else if (_promptMode == 'For Length') {
+      instruction = "အောက်ပါစာသားကို မြန်မာဘာသာ Podcast အစီအစဉ်တစ်ခုကဲ့သို့ အသေးစိတ် ပြည့်စုံစွာ၊ သဘာဝကျသော အသုံးအနှုန်းများဖြင့် မြန်မာဘာသာဖြင့် အပြည့်အစုံ ရေးသားတင်ဆက်ပေးပါ:";
+    } else {
+      instruction = "${_customPromptController.text.trim()} (ကျေးဇူးပြု၍ မြန်မာဘာသာဖြင့် ရေးသားပေးပါ):";
+    }
+
+    final url = Uri.parse("https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=$_geminiApiKey");
+    final response = await http.post(
+      url,
+      headers: {'Content-Type': 'application/json'},
+      body: jsonEncode({
+        "contents": [
+          {
+            "parts": [
+              {"text": "$instruction\n\n$rawContent"}
+            ]
+          }
+        ]
+      }),
+    );
+
+    if (response.statusCode == 200) {
+      final data = jsonDecode(response.body);
+      return data['candidates']?[0]?['content']?['parts']?[0]?['text'] ?? "စာသား မရရှိပါ";
+    } else {
+      throw Exception("Gemini Script Error: ${response.statusCode}");
+    }
+  }
+
+  // Gemini API Voice / Audio Generator
+  Future<String?> _callGeminiAudioTTS(String scriptToRead) async {
+    try {
+      final url = Uri.parse("https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=$_geminiApiKey");
+      final voicePrompt = "Read this text naturally and clearly as a $_selectedGender speaker in $_selectedStyle tone: \n$scriptToRead";
+
+      final response = await http.post(
+        url,
+        headers: {'Content-Type': 'application/json'},
+        body: jsonEncode({
+          "contents": [
+            {
+              "parts": [
+                {"text": voicePrompt}
+              ]
+            }
+          ],
+          "generationConfig": {
+            "responseModalities": ["AUDIO", "TEXT"],
+            "speechConfig": {
+              "voiceConfig": {
+                "prebuiltVoiceConfig": {
+                  "voiceName": _selectedGender == 'Female' ? "Kore" : "Puck"
+                }
+              }
+            }
+          }
+        }),
+      );
+
+      if (response.statusCode == 200) {
+        final data = jsonDecode(response.body);
+        final parts = data['candidates']?[0]?['content']?['parts'] as List<dynamic>?;
+        if (parts != null) {
+          for (var p in parts) {
+            if (p.containsKey('inlineData')) {
+              final base64Audio = p['inlineData']['data'];
+              final bytes = base64Decode(base64Audio);
+              final tempDir = Directory.systemTemp;
+              final file = File('${tempDir.path}/gemini_podcast_output.mp3');
+              await file.writeAsBytes(bytes);
+              return file.path;
+            }
+          }
+        }
+      }
+    } catch (_) {}
+    return null;
+  }
+
+  Future<void> _processPodcastGeneration() async {
     if (_geminiApiKey.isEmpty) {
       _saveSettingsDialog();
       return;
@@ -253,45 +342,43 @@ class _PodcastHomeScreenState extends State<PodcastHomeScreen> with SingleTicker
 
     setState(() => _isGeneratingPodcast = true);
 
-    String instruction = "";
-    if (_promptMode == 'For Point') {
-      instruction = "အောက်ပါ စာသားကို နားဆင်ရလွယ်ကူပြီး စိတ်ဝင်စားဖွယ်ကောင်းသော မြန်မာ Podcast အဖြစ် အဓိက အချက်များ (Bullet points) သီးသန့် မြန်မာလို ရေးပေးပါ:";
-    } else if (_promptMode == 'For Length') {
-      instruction = "အောက်ပါ စာသားကို မြန်မာဘာသာ Podcast အစီအစဉ်တစ်ခုကဲ့သို့ အသေးစိတ် ပြည့်စုံစွာ၊ သဘာဝကျသော အသုံးအနှုန်းများဖြင့် မြန်မာလို အပြည့်အစုံ ရေးပေးပါ:";
-    } else {
-      instruction = "${_customPromptController.text.trim()} (မြန်မာဘာသာဖြင့် ထုတ်ပေးပါ):";
-    }
-
     try {
-      final url = Uri.parse("https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=$_geminiApiKey");
-      final response = await http.post(
-        url,
-        headers: {'Content-Type': 'application/json'},
-        body: jsonEncode({
-          "contents": [
-            {
-              "parts": [
-                {"text": "$instruction\n\n$inputText"}
-              ]
-            }
-          ]
-        }),
-      );
+      String finalScript = inputText;
 
-      if (response.statusCode == 200) {
-        final data = jsonDecode(response.body);
-        final script = data['candidates']?[0]?['content']?['parts']?[0]?['text'] ?? "ရလဒ် မရရှိပါ";
-        setState(() {
-          _outputBurmeseScript = script;
-          _isGeneratingPodcast = false;
-        });
-      } else {
-        throw Exception("API Error: ${response.statusCode}");
+      // အကယ်၍ AI Rewrite Switch ဖွင့်ထားပါက Gemini ဖြင့် Podcast Script အရင်ရေးခိုင်းမည်
+      if (_enableAiRewrite) {
+        finalScript = await _callGeminiPodcastScript(inputText);
       }
+
+      // Voice TTS ဖန်တီးခြင်း
+      String? audioPath = await _callGeminiAudioTTS(finalScript);
+
+      setState(() {
+        _outputBurmeseScript = finalScript;
+        _generatedAudioPath = audioPath;
+        _isGeneratingPodcast = false;
+      });
     } catch (e) {
       setState(() => _isGeneratingPodcast = false);
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(content: Text('အမှားဖြစ်ပေါ်ပါသည်: $e')),
+      );
+    }
+  }
+
+  Future<void> _togglePodcastAudio() async {
+    if (_generatedAudioPath != null && File(_generatedAudioPath!).existsSync()) {
+      if (_isPodcastAudioPlaying) {
+        await _podcastAudioPlayer.pause();
+        setState(() => _isPodcastAudioPlaying = false);
+      } else {
+        await _podcastAudioPlayer.setPlaybackRate(_speed);
+        await _podcastAudioPlayer.play(DeviceFileSource(_generatedAudioPath!));
+        setState(() => _isPodcastAudioPlaying = true);
+      }
+    } else {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('အသံဖိုင် ဖတ်ရှုမရပါ')),
       );
     }
   }
@@ -445,6 +532,7 @@ class _PodcastHomeScreenState extends State<PodcastHomeScreen> with SingleTicker
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.stretch,
                 children: [
+                  // Input Options Card
                   Card(
                     color: const Color(0xFF1E1E1E),
                     shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
@@ -453,10 +541,20 @@ class _PodcastHomeScreenState extends State<PodcastHomeScreen> with SingleTicker
                       child: Column(
                         crossAxisAlignment: CrossAxisAlignment.start,
                         children: [
-                          const Text('Input Text (စာသား ထည့်သွင်းနည်းများ):',
-                              style: TextStyle(fontWeight: FontWeight.bold, color: Color(0xFFC5A059))),
-                          const SizedBox(height: 8),
-                          // 3 Import Actions Row
+                          Row(
+                            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                            children: [
+                              const Text('Input Text (စာသား ထည့်သွင်းနည်းများ):',
+                                  style: TextStyle(fontWeight: FontWeight.bold, color: Color(0xFFC5A059))),
+                              if (_inputStudioTextController.text.isNotEmpty)
+                                IconButton(
+                                  icon: const Icon(Icons.clear, size: 18, color: Colors.white60),
+                                  onPressed: () => setState(() => _inputStudioTextController.clear()),
+                                  tooltip: 'စာသားများ အကုန်ဖျက်မည်',
+                                ),
+                            ],
+                          ),
+                          const SizedBox(height: 4),
                           SingleChildScrollView(
                             scrollDirection: Axis.horizontal,
                             child: Row(
@@ -504,7 +602,8 @@ class _PodcastHomeScreenState extends State<PodcastHomeScreen> with SingleTicker
                     ),
                   ),
                   const SizedBox(height: 12),
-                  // Prompt Mode Selection
+
+                  // AI Script Rewrite Switch & Prompt Settings
                   Card(
                     color: const Color(0xFF1E1E1E),
                     shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
@@ -513,44 +612,72 @@ class _PodcastHomeScreenState extends State<PodcastHomeScreen> with SingleTicker
                       child: Column(
                         crossAxisAlignment: CrossAxisAlignment.start,
                         children: [
-                          const Text('Podcast Style / Prompt ရွေးချယ်မှု', style: TextStyle(fontWeight: FontWeight.bold, color: Color(0xFFC5A059))),
-                          const SizedBox(height: 8),
                           Row(
+                            mainAxisAlignment: MainAxisAlignment.spaceBetween,
                             children: [
-                              ChoiceChip(
-                                label: const Text('For Point'),
-                                selected: _promptMode == 'For Point',
-                                selectedColor: const Color(0xFFC5A059),
-                                onSelected: (val) => setState(() => _promptMode = 'For Point'),
+                              Column(
+                                crossAxisAlignment: CrossAxisAlignment.start,
+                                children: [
+                                  const Text('AI Podcast Script Rewrite',
+                                      style: TextStyle(fontWeight: FontWeight.bold, color: Color(0xFFC5A059))),
+                                  Text(
+                                    _enableAiRewrite
+                                        ? 'ဖွင့်ထားသည် (Gemini ဖြင့် ဇာတ်ညွှန်းပြင်မည်)'
+                                        : 'ပိတ်ထားသည် (ရိုက်ထားသည့်အတိုင်း ဒဲ့ TTS ဖတ်မည်)',
+                                    style: const TextStyle(fontSize: 11, color: Colors.white60),
+                                  ),
+                                ],
                               ),
-                              const SizedBox(width: 8),
-                              ChoiceChip(
-                                label: const Text('For Length'),
-                                selected: _promptMode == 'For Length',
-                                selectedColor: const Color(0xFFC5A059),
-                                onSelected: (val) => setState(() => _promptMode = 'For Length'),
-                              ),
-                              const SizedBox(width: 8),
-                              ChoiceChip(
-                                label: const Text('Custom'),
-                                selected: _promptMode == 'Custom Prompt',
-                                selectedColor: const Color(0xFFC5A059),
-                                onSelected: (val) => setState(() => _promptMode = 'Custom Prompt'),
+                              Switch(
+                                value: _enableAiRewrite,
+                                activeColor: const Color(0xFFC5A059),
+                                onChanged: (val) => setState(() => _enableAiRewrite = val),
                               ),
                             ],
                           ),
-                          if (_promptMode == 'Custom Prompt') ...[
+                          if (_enableAiRewrite) ...[
+                            const Divider(color: Colors.white24, height: 18),
+                            const Text('Podcast Style / Prompt ရွေးချယ်မှု',
+                                style: TextStyle(fontWeight: FontWeight.w600, color: Colors.white)),
                             const SizedBox(height: 8),
-                            TextField(
-                              controller: _customPromptController,
-                              decoration: const InputDecoration(hintText: 'စိတ်ကြိုက် Prompt ညွှန်ကြားချက် ရိုက်ထည့်ပါ...'),
+                            Row(
+                              children: [
+                                ChoiceChip(
+                                  label: const Text('For Point'),
+                                  selected: _promptMode == 'For Point',
+                                  selectedColor: const Color(0xFFC5A059),
+                                  onSelected: (val) => setState(() => _promptMode = 'For Point'),
+                                ),
+                                const SizedBox(width: 8),
+                                ChoiceChip(
+                                  label: const Text('For Length'),
+                                  selected: _promptMode == 'For Length',
+                                  selectedColor: const Color(0xFFC5A059),
+                                  onSelected: (val) => setState(() => _promptMode = 'For Length'),
+                                ),
+                                const SizedBox(width: 8),
+                                ChoiceChip(
+                                  label: const Text('Custom'),
+                                  selected: _promptMode == 'Custom Prompt',
+                                  selectedColor: const Color(0xFFC5A059),
+                                  onSelected: (val) => setState(() => _promptMode = 'Custom Prompt'),
+                                ),
+                              ],
                             ),
+                            if (_promptMode == 'Custom Prompt') ...[
+                              const SizedBox(height: 8),
+                              TextField(
+                                controller: _customPromptController,
+                                decoration: const InputDecoration(hintText: 'စိတ်ကြိုက် Prompt ညွှန်ကြားချက် ရိုက်ထည့်ပါ...'),
+                              ),
+                            ],
                           ],
                         ],
                       ),
                     ),
                   ),
                   const SizedBox(height: 12),
+
                   // Voice Settings
                   Card(
                     color: const Color(0xFF1E1E1E),
@@ -602,18 +729,25 @@ class _PodcastHomeScreenState extends State<PodcastHomeScreen> with SingleTicker
                     ),
                   ),
                   const SizedBox(height: 14),
+
                   ElevatedButton.icon(
                     style: ElevatedButton.styleFrom(
                       backgroundColor: const Color(0xFFC5A059),
                       foregroundColor: Colors.black,
                       padding: const EdgeInsets.symmetric(vertical: 14),
                     ),
-                    onPressed: _isGeneratingPodcast ? null : _generatePodcast,
+                    onPressed: _isGeneratingPodcast ? null : _processPodcastGeneration,
                     icon: _isGeneratingPodcast
                         ? const SizedBox(width: 20, height: 20, child: CircularProgressIndicator(strokeWidth: 2, color: Colors.black))
                         : const Icon(Icons.auto_awesome),
-                    label: Text(_isGeneratingPodcast ? 'Gemini AI ဖန်တီးနေပါသည်...' : 'Podcast ဖန်တီးမည် (Generate)', style: const TextStyle(fontWeight: FontWeight.bold)),
+                    label: Text(
+                      _isGeneratingPodcast
+                          ? 'ဖန်တီးနေပါသည်...'
+                          : (_enableAiRewrite ? 'Podcast ဖန်တီးမည် (Rewrite & TTS)' : 'အသံဖိုင် ထုတ်လုပ်မည် (Direct TTS)'),
+                      style: const TextStyle(fontWeight: FontWeight.bold),
+                    ),
                   ),
+
                   if (_outputBurmeseScript.isNotEmpty) ...[
                     const SizedBox(height: 16),
                     Card(
@@ -627,7 +761,7 @@ class _PodcastHomeScreenState extends State<PodcastHomeScreen> with SingleTicker
                             Row(
                               mainAxisAlignment: MainAxisAlignment.spaceBetween,
                               children: [
-                                const Text('PODCAST SCRIPT (ရလဒ်)', style: TextStyle(fontWeight: FontWeight.bold, color: Color(0xFFC5A059))),
+                                const Text('SCRIPT / TEXT ရလဒ်', style: TextStyle(fontWeight: FontWeight.bold, color: Color(0xFFC5A059))),
                                 IconButton(
                                   icon: const Icon(Icons.copy, size: 20, color: Colors.white70),
                                   onPressed: () {
@@ -639,6 +773,17 @@ class _PodcastHomeScreenState extends State<PodcastHomeScreen> with SingleTicker
                             ),
                             const Divider(color: Colors.white24),
                             SelectableText(_outputBurmeseScript, style: const TextStyle(fontSize: 14, height: 1.6)),
+                            const SizedBox(height: 12),
+                            ElevatedButton.icon(
+                              style: ElevatedButton.styleFrom(
+                                backgroundColor: _isPodcastAudioPlaying ? Colors.redAccent : const Color(0xFFC5A059),
+                                foregroundColor: Colors.black,
+                              ),
+                              onPressed: _togglePodcastAudio,
+                              icon: Icon(_isPodcastAudioPlaying ? Icons.stop : Icons.play_arrow),
+                              label: Text(_isPodcastAudioPlaying ? 'အသံ ရပ်တန့်မည်' : 'အသံဖိုင် နားထောင်မည်',
+                                  style: const TextStyle(fontWeight: FontWeight.bold)),
+                            ),
                           ],
                         ),
                       ),
