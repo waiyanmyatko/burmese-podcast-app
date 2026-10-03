@@ -28,45 +28,33 @@ jobs:
           flutter create --project-name burmese_podcast_app --org com.waiyan --platforms=android .
           find android -name "AndroidManifest.xml" -exec sed -i '/<application/i \    <uses-permission android:name="android.permission.INTERNET"/>\n    <uses-permission android:name="android.permission.READ_EXTERNAL_STORAGE"/>' {} +
 
-      - name: Force Android SDK 36 across all plugins
+      - name: Force Android SDK 36 on all subprojects
         run: |
-          python3 -c "
-          import os, glob
+          cat << 'EOF' >> android/app/build.gradle
+          android {
+              compileSdkVersion 36
+              defaultConfig {
+                  targetSdkVersion 36
+              }
+          }
+          EOF
 
-          # subprojects အားလုံးအတွက် compileSdkVersion 36 သတ်မှတ်ခြင်း
-          root_gradle = 'android/build.gradle'
-          if os.path.exists(root_gradle):
-              with open(root_gradle, 'a') as f:
-                  f.write('''
+          # settings.gradle သို့မဟုတ် build.gradle အောက်ခြေတွင် subprojects override ထည့်သွင်းခြင်း
+          cat << 'EOF' >> android/build.gradle
           subprojects {
+              project.evaluationDependsOn(':app')
               afterEvaluate { project ->
                   if (project.hasProperty('android')) {
                       project.android {
                           compileSdkVersion 36
+                          if (project.android.hasProperty('compileSdk')) {
+                              project.android.compileSdk = 36
+                          }
                       }
                   }
               }
           }
-          ''')
-              print('Patched root build.gradle')
-
-          # build.gradle နှင့် build.gradle.kts ဖိုင်အားလုံးတွင် compileSdk 36 သို့ အစားထိုးခြင်း
-          for p in glob.glob('android/**/*.gradle*', recursive=True):
-              with open(p, 'r') as f:
-                  txt = f.read()
-              new_txt = txt.replace('compileSdk = flutter.compileSdkVersion', 'compileSdk = 36')
-              new_txt = new_txt.replace('compileSdkVersion flutter.compileSdkVersion', 'compileSdkVersion 36')
-              new_txt = new_txt.replace('compileSdk = 35', 'compileSdk = 36')
-              new_txt = new_txt.replace('compileSdkVersion 35', 'compileSdkVersion 36')
-              new_txt = new_txt.replace('targetSdk = flutter.targetSdkVersion', 'targetSdk = 36')
-              new_txt = new_txt.replace('targetSdkVersion flutter.targetSdkVersion', 'targetSdkVersion 36')
-              new_txt = new_txt.replace('targetSdk = 35', 'targetSdk = 36')
-              new_txt = new_txt.replace('targetSdkVersion 35', 'targetSdkVersion 36')
-              if txt != new_txt:
-                  with open(p, 'w') as f:
-                      f.write(new_txt)
-                  print(f'Patched: {p}')
-          "
+          EOF
 
       - name: Install dependencies
         run: flutter pub get
