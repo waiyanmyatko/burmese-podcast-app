@@ -47,7 +47,7 @@ class _PodcastHomeScreenState extends State<PodcastHomeScreen> with SingleTicker
   final AudioPlayer _sourceAudioPlayer = AudioPlayer();
   final AudioPlayer _podcastAudioPlayer = AudioPlayer();
 
-  // Part 1: Offline STT States (No API Key Required)
+  // Part 1: Offline STT States
   String? _selectedAudioPath;
   bool _isSourcePlaying = false;
   bool _isTranscribing = false;
@@ -60,9 +60,30 @@ class _PodcastHomeScreenState extends State<PodcastHomeScreen> with SingleTicker
   
   bool _enableAiRewrite = true;
   String _promptMode = 'For Point';
-  String _selectedStyle = 'Podcast';
-  String _selectedGender = 'Male';
+  
+  // Voice & Style Options
+  String _selectedVoice = 'Puck';
+  String _selectedStyle = 'Podcast Host';
   double _speed = 1.0;
+
+  final Map<String, String> _voiceDescriptions = {
+    'Puck': 'Male - ပေါ့ပါးသွက်လက်၊ လူငယ်ဆန်သော အသံ',
+    'Charon': 'Male - တည်ငြိမ်ရင့်ကျက်၊ နက်ရှိုင်းသော အသံ',
+    'Fenrir': 'Male - အားမာန်ပါပြီး ပြတ်သားသော အသံ',
+    'Orpheus': 'Male - စိတ်အေးချမ်းစေသော ညင်သာသည့် အသံ',
+    'Kore': 'Female - အေးချမ်းကြည်လင်ပြီး သိမ်မွေ့သော အသံ',
+    'Aoede': 'Female - နွေးထွေးဖော်ရွေ၊ အသံချိုချို',
+    'Leda': 'Female - ဆွဲဆောင်မှုရှိပြီး အာရုံစိုက်စေသော အသံ',
+  };
+
+  final List<String> _styles = [
+    'Podcast Host',
+    'Tutor / Educational',
+    'Professional / News',
+    'Storyteller / Audio Book',
+    'Casual Conversation',
+    'Motivational',
+  ];
 
   bool _isGeneratingPodcast = false;
   String _generationStatus = '';
@@ -100,15 +121,14 @@ class _PodcastHomeScreenState extends State<PodcastHomeScreen> with SingleTicker
     final prefs = await SharedPreferences.getInstance();
     setState(() {
       _geminiApiKey = prefs.getString('gemini_api_key') ?? '';
-      _selectedStyle = prefs.getString('default_style') ?? 'Podcast';
-      _selectedGender = prefs.getString('default_gender') ?? 'Male';
+      _selectedVoice = prefs.getString('default_voice') ?? 'Puck';
+      _selectedStyle = prefs.getString('default_style') ?? 'Podcast Host';
       _speed = prefs.getDouble('default_speed') ?? 1.0;
       _promptMode = prefs.getString('default_prompt_mode') ?? 'For Point';
       _enableAiRewrite = prefs.getBool('default_enable_ai_rewrite') ?? true;
     });
   }
 
-  // --- DIALOGS: HELP (With VPN Note), ABOUT, API KEY ---
   void _showHelpDialog() {
     showDialog(
       context: context,
@@ -144,9 +164,9 @@ class _PodcastHomeScreenState extends State<PodcastHomeScreen> with SingleTicker
               SizedBox(height: 6),
               Text('၄။ ရရှိလာသော AIzaSy... ဖြင့် စတင်သည့် Key ကို Copy ကူးပါ။', style: TextStyle(fontSize: 13, height: 1.4)),
               SizedBox(height: 6),
-              Text('၅။ WY\'s PODCAST App ပေါ်ရှိ သော့ပုံ (Key Icon) ကို နှိပ်ပြီး Paste ချကာ သိမ်းဆည်းပါ။', style: TextStyle(fontSize: 13, height: 1.4)),
+              Text('၅။ App ပေါ်ရှိ သော့ပုံ (Key Icon) ကို နှိပ်ပြီး Paste ချကာ သိမ်းဆည်းပါ။', style: TextStyle(fontSize: 13, height: 1.4)),
               SizedBox(height: 12),
-              Text('* တစ်ကြိမ်သာ ထည့်သွင်းရန် လိုအပ်ပြီး အပိုင်း (၂) အတွက်သာ ဖြစ်ပါသည်။', style: TextStyle(fontSize: 12, color: Color(0xFFC5A059))),
+              Text('* အပိုင်း (၁) အတွက် API Key မလိုပါ။ အပိုင်း (၂) Podcast Studio အတွက်သာ လိုအပ်ပါသည်။', style: TextStyle(fontSize: 12, color: Color(0xFFC5A059))),
             ],
           ),
         ),
@@ -230,7 +250,7 @@ class _PodcastHomeScreenState extends State<PodcastHomeScreen> with SingleTicker
           mainAxisSize: MainAxisSize.min,
           children: [
             const Text(
-              'အပိုင်း (၂) Studio အတွက် Gemini API Key ကို ထည့်သွင်းသိမ်းဆည်းပေးပါ။ (အပိုင်း ၁ တွင် Key လုံးဝ မလိုပါ)',
+              'အပိုင်း (၂) Studio အတွက် Gemini API Key ကို ထည့်သွင်းပေးပါ။ (အပိုင်း ၁ တွင် Key မလိုပါ)',
               style: TextStyle(fontSize: 12, color: Colors.white70),
             ),
             const SizedBox(height: 12),
@@ -264,7 +284,7 @@ class _PodcastHomeScreenState extends State<PodcastHomeScreen> with SingleTicker
     );
   }
 
-  // --- PART 1: OFFLINE AUDIO TO TEXT (NO API KEY REQUIRED) ---
+  // --- PART 1: AUDIO TO TEXT (OFFLINE) ---
   Future<void> _pickAudioFile() async {
     final result = await FilePicker.platform.pickFiles(
       type: FileType.custom,
@@ -296,12 +316,10 @@ class _PodcastHomeScreenState extends State<PodcastHomeScreen> with SingleTicker
 
     setState(() => _isTranscribing = true);
 
-    // On-device Offline STT Processing (No Network, No API Key)
     try {
       final fileName = _selectedAudioPath!.split('/').last;
       await Future.delayed(const Duration(seconds: 3));
 
-      // Real local offline transcription result
       setState(() {
         _isTranscribing = false;
         _extractedTextController.text =
@@ -337,29 +355,50 @@ class _PodcastHomeScreenState extends State<PodcastHomeScreen> with SingleTicker
 
   List<String> _splitTextIntoChunks(String text, int maxLength) {
     List<String> chunks = [];
-    List<String> sentences = text.split(RegExp(r'(?<=[။\n\.])'));
+    List<String> sentences = text.split(RegExp(r'(?<=[။\n\.!\?])'));
     String current = "";
 
     for (var s in sentences) {
       if ((current + s).length <= maxLength) {
         current += s;
       } else {
-        if (current.isNotEmpty) chunks.add(current.trim());
+        if (current.trim().isNotEmpty) chunks.add(current.trim());
         current = s;
       }
     }
-    if (current.isNotEmpty) chunks.add(current.trim());
+    if (current.trim().isNotEmpty) chunks.add(current.trim());
     return chunks.isEmpty ? [text] : chunks;
   }
 
   Future<String> _callGeminiPodcastScript(String rawContent) async {
+    String styleInstruction = "";
+    switch (_selectedStyle) {
+      case 'Tutor / Educational':
+        styleInstruction = "ဆရာတစ်ဦးက တပည့်များအား စိတ်ရှည်စွာ ရှင်းပြသင်ကြားပေးနေသည့် ပုံစံဖြင့်";
+        break;
+      case 'Professional / News':
+        styleInstruction = "သတင်းနှင့် စီးပွားရေး တင်ဆက်မှုများကဲ့သို့ တည်ကြည်လေးနက်သော ပုံစံဖြင့်";
+        break;
+      case 'Storyteller / Audio Book':
+        styleInstruction = "ဇာတ်လမ်းတစ်ပုဒ်ကို ရသမြောက်စွာ ပြောပြနေသည့် Audio Book ပုံစံဖြင့်";
+        break;
+      case 'Casual Conversation':
+        styleInstruction = "သူငယ်ချင်းအချင်းချင်း ပေါ့ပေါ့ပါးပါး ဗဟုသုတ ဝေမျှနေသည့် စကားပြော ပုံစံဖြင့်";
+        break;
+      case 'Motivational':
+        styleInstruction = "နားဆင်သူများအား အားတက်ကြွစေပြီး စိတ်ခွန်အားဖြစ်စေမည့် တင်ဆက်မှု ပုံစံဖြင့်";
+        break;
+      default:
+        styleInstruction = "နားဆင်ရလွယ်ကူပြီး စိတ်ဝင်စားဖွယ်ကောင်းသော သဘာဝ Podcast Host ပုံစံဖြင့်";
+    }
+
     String instruction = "";
     if (_promptMode == 'For Point') {
-      instruction = "အောက်ပါစာသားကို နားဆင်ရလွယ်ကူပြီး စိတ်ဝင်စားဖွယ်ကောင်းသော မြန်မာ Podcast ဇာတ်ညွှန်းအဖြစ် အဓိက အချက်များ (Bullet points) သီးသန့် မြန်မာလို ရေးပေးပါ:";
+      instruction = "အောက်ပါစာသားကို $styleInstruction အဓိက အချက်များ (Bullet points) သီးသန့် မြန်မာလို ရေးပေးပါ:";
     } else if (_promptMode == 'For Length') {
-      instruction = "အောက်ပါစာသားကို မြန်မာဘာသာ Podcast အစီအစဉ်တစ်ခုကဲ့သို့ အသေးစိတ် ပြည့်စုံစွာ၊ သဘာဝကျသော အသုံးအနှုန်းများဖြင့် မြန်မာလို အပြည့်အစုံ ရေးပေးပါ:";
+      instruction = "အောက်ပါစာသားကို $styleInstruction အသေးစိတ် ပြည့်စုံစွာ၊ သဘာဝကျသော အသုံးအနှုန်းများဖြင့် မြန်မာလို အပြည့်အစုံ ရေးပေးပါ:";
     } else {
-      instruction = "${_customPromptController.text.trim()} (မြန်မာဘာသာဖြင့် ရေးသားပေးပါ):";
+      instruction = "${_customPromptController.text.trim()} ($styleInstruction မြန်မာဘာသာဖြင့် ရေးသားပေးပါ):";
     }
 
     final url = Uri.parse("https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=$_geminiApiKey");
@@ -385,18 +424,61 @@ class _PodcastHomeScreenState extends State<PodcastHomeScreen> with SingleTicker
     }
   }
 
-  Future<Uint8List?> _downloadChunkAudio(String text) async {
-    try {
-      final encoded = Uri.encodeComponent(text);
-      final ttsUrl = Uri.parse("https://translate.google.com/translate_tts?ie=UTF-8&tl=my&client=tw-ob&q=$encoded");
-      final resp = await http.get(ttsUrl, headers: {
-        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)'
-      });
+  Future<Uint8List?> _fetchVoiceForChunk(String chunkText) async {
+    final url = Uri.parse("https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=$_geminiApiKey");
 
+    try {
+      final response = await http.post(
+        url,
+        headers: {'Content-Type': 'application/json'},
+        body: jsonEncode({
+          "contents": [
+            {
+              "parts": [
+                {
+                  "text": "Read the following text clearly in a '$_selectedStyle' tone:\n$chunkText"
+                }
+              ]
+            }
+          ],
+          "generationConfig": {
+            "responseModalities": ["AUDIO", "TEXT"],
+            "speechConfig": {
+              "voiceConfig": {
+                "prebuiltVoiceConfig": {
+                  "voiceName": _selectedVoice
+                }
+              }
+            }
+          }
+        }),
+      );
+
+      if (response.statusCode == 200) {
+        final data = jsonDecode(response.body);
+        final parts = data['candidates']?[0]?['content']?['parts'] as List<dynamic>?;
+        if (parts != null) {
+          for (var p in parts) {
+            if (p.containsKey('inlineData')) {
+              return base64Decode(p['inlineData']['data']);
+            }
+          }
+        }
+      }
+    } catch (_) {}
+
+    // Fallback Stream TTS
+    try {
+      final encoded = Uri.encodeComponent(chunkText);
+      final fallbackUrl = Uri.parse("https://translate.google.com/translate_tts?ie=UTF-8&tl=my&client=tw-ob&q=$encoded");
+      final resp = await http.get(fallbackUrl, headers: {
+        'User-Agent': 'Mozilla/5.0 (Linux; Android 10)'
+      });
       if (resp.statusCode == 200) {
         return resp.bodyBytes;
       }
     } catch (_) {}
+
     return null;
   }
 
@@ -426,18 +508,20 @@ class _PodcastHomeScreenState extends State<PodcastHomeScreen> with SingleTicker
       }
       setState(() => _outputBurmeseScript = finalScript);
 
-      List<String> chunks = _splitTextIntoChunks(finalScript, 100);
+      List<String> chunks = _splitTextIntoChunks(finalScript, 120);
       List<int> fullAudioBytes = [];
 
       for (int i = 0; i < chunks.length; i++) {
         setState(() {
-          _generationStatus = 'အသံဖိုင် အပိုင်း (${i + 1}/${chunks.length}) ပေါင်းစပ်နေပါသည်...';
+          _generationStatus = 'အသံအပိုင်း (${i + 1}/${chunks.length}) ပေါင်းစပ်နေပါသည်...';
         });
 
-        Uint8List? audioBytes = await _downloadChunkAudio(chunks[i]);
-        if (audioBytes != null) {
+        Uint8List? audioBytes = await _fetchVoiceForChunk(chunks[i]);
+        if (audioBytes != null && audioBytes.isNotEmpty) {
           fullAudioBytes.addAll(audioBytes);
         }
+
+        await Future.delayed(const Duration(milliseconds: 300));
       }
 
       if (fullAudioBytes.isNotEmpty) {
@@ -453,7 +537,7 @@ class _PodcastHomeScreenState extends State<PodcastHomeScreen> with SingleTicker
       } else {
         setState(() {
           _isGeneratingPodcast = false;
-          _generationStatus = 'Script ရရှိပါသည်';
+          _generationStatus = 'Script ရရှိပါသည် (Audio generation failed)';
         });
       }
     } catch (e) {
@@ -768,20 +852,57 @@ class _PodcastHomeScreenState extends State<PodcastHomeScreen> with SingleTicker
                       child: Column(
                         crossAxisAlignment: CrossAxisAlignment.start,
                         children: [
-                          const Text('Voice Settings', style: TextStyle(fontWeight: FontWeight.bold, color: Color(0xFFC5A059))),
-                          Row(
-                            mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                            children: [
-                              const Text('Voice Gender:'),
-                              DropdownButton<String>(
-                                value: _selectedGender,
+                          const Text('Voice Studio Settings', style: TextStyle(fontWeight: FontWeight.bold, color: Color(0xFFC5A059), fontSize: 16)),
+                          const SizedBox(height: 12),
+                          const Text('Voice Character:', style: TextStyle(color: Colors.white70, fontSize: 13)),
+                          const SizedBox(height: 6),
+                          Container(
+                            padding: const EdgeInsets.symmetric(horizontal: 12),
+                            decoration: BoxDecoration(
+                              color: const Color(0xFF2A2A2A),
+                              borderRadius: BorderRadius.circular(8),
+                            ),
+                            child: DropdownButtonHideUnderline(
+                              child: DropdownButton<String>(
+                                value: _selectedVoice,
+                                isExpanded: true,
                                 dropdownColor: const Color(0xFF2A2A2A),
-                                items: ['Male', 'Female'].map((g) => DropdownMenuItem(value: g, child: Text(g))).toList(),
-                                onChanged: (val) => setState(() => _selectedGender = val!),
+                                items: _voiceDescriptions.entries.map((entry) {
+                                  return DropdownMenuItem(
+                                    value: entry.key,
+                                    child: Text('${entry.key} (${entry.value})', style: const TextStyle(fontSize: 12)),
+                                  );
+                                }).toList(),
+                                onChanged: (val) => setState(() => _selectedVoice = val!),
                               ),
-                            ],
+                            ),
                           ),
-                          Text('Speed: ${_speed.toStringAsFixed(1)}x'),
+                          const SizedBox(height: 12),
+                          const Text('Podcast Style / Tone:', style: TextStyle(color: Colors.white70, fontSize: 13)),
+                          const SizedBox(height: 6),
+                          Container(
+                            padding: const EdgeInsets.symmetric(horizontal: 12),
+                            decoration: BoxDecoration(
+                              color: const Color(0xFF2A2A2A),
+                              borderRadius: BorderRadius.circular(8),
+                            ),
+                            child: DropdownButtonHideUnderline(
+                              child: DropdownButton<String>(
+                                value: _selectedStyle,
+                                isExpanded: true,
+                                dropdownColor: const Color(0xFF2A2A2A),
+                                items: _styles.map((s) {
+                                  return DropdownMenuItem(
+                                    value: s,
+                                    child: Text(s, style: const TextStyle(fontSize: 13)),
+                                  );
+                                }).toList(),
+                                onChanged: (val) => setState(() => _selectedStyle = val!),
+                              ),
+                            ),
+                          ),
+                          const SizedBox(height: 12),
+                          Text('Speed: ${_speed.toStringAsFixed(1)}x', style: const TextStyle(color: Colors.white70, fontSize: 13)),
                           Slider(
                             value: _speed,
                             min: 0.5,
