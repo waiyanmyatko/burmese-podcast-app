@@ -28,39 +28,11 @@ jobs:
           flutter create --project-name burmese_podcast_app --org com.waiyan --platforms=android .
           find android -name "AndroidManifest.xml" -exec sed -i '/<application/i \    <uses-permission android:name="android.permission.INTERNET"/>\n    <uses-permission android:name="android.permission.READ_EXTERNAL_STORAGE"/>' {} +
 
-      - name: Force Android SDK 36 on all subprojects
-        run: |
-          cat << 'EOF' >> android/app/build.gradle
-          android {
-              compileSdkVersion 36
-              defaultConfig {
-                  targetSdkVersion 36
-              }
-          }
-          EOF
-
-          # settings.gradle သို့မဟုတ် build.gradle အောက်ခြေတွင် subprojects override ထည့်သွင်းခြင်း
-          cat << 'EOF' >> android/build.gradle
-          subprojects {
-              project.evaluationDependsOn(':app')
-              afterEvaluate { project ->
-                  if (project.hasProperty('android')) {
-                      project.android {
-                          compileSdkVersion 36
-                          if (project.android.hasProperty('compileSdk')) {
-                              project.android.compileSdk = 36
-                          }
-                      }
-                  }
-              }
-          }
-          EOF
-
       - name: Install dependencies
         run: flutter pub get
 
       - name: Build Android Release APK
-        run: flutter build apk --release --no-tree-shake-icons
+        run: flutter build apk --release --no-tree-shake-icons --android-compile-sdk 36 --android-target-sdk 36
 
       - name: Upload APK
         uses: actions/upload-artifact@v4
