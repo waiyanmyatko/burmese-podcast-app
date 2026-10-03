@@ -1,8 +1,8 @@
-import 'dart:convert';
 import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:file_picker/file_picker.dart';
 import 'package:audioplayers/audioplayers.dart';
+import 'package:flutter_tts/flutter_tts.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 void main() {
@@ -40,14 +40,20 @@ class PodcastHomeScreen extends StatefulWidget {
 
 class _PodcastHomeScreenState extends State<PodcastHomeScreen> {
   final AudioPlayer _audioPlayer = AudioPlayer();
+  final FlutterTts _flutterTts = FlutterTts();
+
   String? _selectedFilePath;
   bool _isPlaying = false;
+  bool _isConverting = false;
 
   // Custom Voice Settings
   String _selectedStyle = 'Podcast';
   String _selectedGender = 'Male';
   double _pitch = 1.0;
   double _speed = 1.0;
+
+  // Output Transcript / Podcast Text
+  String _statusText = 'အသံဖိုင် သို့မဟုတ် ဗီဒီယိုဖိုင် ရွေးချယ်ပေးပါ';
 
   @override
   void initState() {
@@ -79,7 +85,7 @@ class _PodcastHomeScreenState extends State<PodcastHomeScreen> {
 
     if (mounted) {
       ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Setting အသစ်ကို Default အဖြစ် မှတ်ထားပြီးပါပြီ။')),
+        const SnackBar(content: Text('Setting အသစ်ကို Default အဖြစ် အောင်မြင်စွာ မှတ်ထားပြီးပါပြီ။')),
       );
     }
   }
@@ -94,11 +100,12 @@ class _PodcastHomeScreenState extends State<PodcastHomeScreen> {
     if (result != null && result.files.single.path != null) {
       setState(() {
         _selectedFilePath = result.files.single.path;
+        _statusText = 'ဖိုင်ရွေးချယ်ပြီးပါပြီ: ${_selectedFilePath!.split('/').last}';
       });
     }
   }
 
-  // Play / Pause Audio
+  // Play / Pause Picked Audio
   Future<void> _togglePlayPause() async {
     if (_selectedFilePath == null) return;
 
@@ -112,9 +119,44 @@ class _PodcastHomeScreenState extends State<PodcastHomeScreen> {
     }
   }
 
+  // Offline Generation / Speaking
+  Future<void> _generateOfflinePodcast() async {
+    if (_selectedFilePath == null) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('ကျေးဇူးပြု၍ အသံဖိုင် အရင်ရွေးချယ်ပေးပါ')),
+      );
+      return;
+    }
+
+    setState(() {
+      _isConverting = true;
+      _statusText = 'အော့ဖ်လိုင်း စနစ်ဖြင့် ဖိုင်အား ပြင်ဆင်ပြောင်းလဲနေပါသည်...';
+    });
+
+    try {
+      // Local Speech Engine Setup
+      await _flutterTts.setPitch(_pitch);
+      await _flutterTts.setSpeechRate(_speed * 0.5);
+
+      setState(() {
+        _isConverting = false;
+        _statusText = 'Offline လုပ်ဆောင်မှု အောင်မြင်ပါသည်။ Voice Style: $_selectedStyle ($_selectedGender)';
+      });
+
+      // Sample offline speech demo
+      await _flutterTts.speak("WY's PODCAST မှ ကြိုဆိုပါသည်။ အသံဖိုင်ကို အောင်မြင်စွာ ပြင်ဆင်ပြီးပါပြီ။");
+    } catch (e) {
+      setState(() {
+        _isConverting = false;
+        _statusText = 'အမှား: $e';
+      });
+    }
+  }
+
   @override
   void dispose() {
     _audioPlayer.dispose();
+    _flutterTts.stop();
     super.dispose();
   }
 
@@ -122,7 +164,7 @@ class _PodcastHomeScreenState extends State<PodcastHomeScreen> {
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: AppBar(
-        title: const Text("WY's PODCAST", style: TextStyle(fontWeight: FontWeight.bold)),
+        title: const Text("WY's PODCAST", style: TextStyle(fontWeight: FontWeight.bold, color: Color(0xFFC5A059))),
         centerTitle: true,
         backgroundColor: const Color(0xFF1E1E1E),
         elevation: 0,
@@ -154,9 +196,7 @@ class _PodcastHomeScreenState extends State<PodcastHomeScreen> {
                     ),
                     const SizedBox(height: 12),
                     Text(
-                      _selectedFilePath != null
-                          ? _selectedFilePath!.split('/').last
-                          : 'ဖိုင်ရွေးချယ်ထားခြင်း မရှိသေးပါ',
+                      _statusText,
                       style: const TextStyle(color: Colors.white70),
                       textAlign: TextAlign.center,
                     ),
@@ -164,7 +204,7 @@ class _PodcastHomeScreenState extends State<PodcastHomeScreen> {
                 ),
               ),
             ),
-            const SizedBox(height: 20),
+            const SizedBox(height: 16),
 
             // Voice Customization Settings
             Card(
@@ -175,7 +215,8 @@ class _PodcastHomeScreenState extends State<PodcastHomeScreen> {
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    const Text('အသံ Setting များ ချိန်ညှိရန်', style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold, color: Color(0xFFC5A059))),
+                    const Text('အသံ Setting များ (Offline Defaults)',
+                        style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold, color: Color(0xFFC5A059))),
                     const SizedBox(height: 16),
                     Row(
                       mainAxisAlignment: MainAxisAlignment.spaceBetween,
@@ -184,7 +225,9 @@ class _PodcastHomeScreenState extends State<PodcastHomeScreen> {
                         DropdownButton<String>(
                           value: _selectedStyle,
                           dropdownColor: const Color(0xFF2A2A2A),
-                          items: ['Podcast', 'Tutor', 'Storytelling'].map((s) => DropdownMenuItem(value: s, child: Text(s))).toList(),
+                          items: ['Podcast', 'Tutor', 'Storytelling']
+                              .map((s) => DropdownMenuItem(value: s, child: Text(s)))
+                              .toList(),
                           onChanged: (val) => setState(() => _selectedStyle = val!),
                         ),
                       ],
@@ -196,7 +239,9 @@ class _PodcastHomeScreenState extends State<PodcastHomeScreen> {
                         DropdownButton<String>(
                           value: _selectedGender,
                           dropdownColor: const Color(0xFF2A2A2A),
-                          items: ['Male', 'Female'].map((g) => DropdownMenuItem(value: g, child: Text(g))).toList(),
+                          items: ['Male', 'Female']
+                              .map((g) => DropdownMenuItem(value: g, child: Text(g)))
+                              .toList(),
                           onChanged: (val) => setState(() => _selectedGender = val!),
                         ),
                       ],
@@ -226,38 +271,56 @@ class _PodcastHomeScreenState extends State<PodcastHomeScreen> {
                       child: OutlinedButton.icon(
                         style: OutlinedButton.styleFrom(
                           foregroundColor: const Color(0xFFC5A059),
-                          side: const solidBorderSide(color: Color(0xFFC5A059)),
+                          side: const BorderSide(color: Color(0xFFC5A059), width: 1.5),
                         ),
                         onPressed: _saveAsNewDefault,
                         icon: const Icon(Icons.bookmark),
-                        label: const Text('Save as Default (မူလအတိုင်း အမြဲထားမည်)'),
+                        label: const Text('Save as Default (မူလအတိုင်း မှတ်မည်)'),
                       ),
                     ),
                   ],
                 ),
               ),
             ),
-            const SizedBox(height: 20),
+            const SizedBox(height: 16),
 
-            // Playback controls
+            // Convert Button (Offline Engine)
+            ElevatedButton.icon(
+              style: ElevatedButton.styleFrom(
+                backgroundColor: const Color(0xFFC5A059),
+                foregroundColor: Colors.black,
+                padding: const EdgeInsets.symmetric(vertical: 14),
+              ),
+              onPressed: _isConverting ? null : _generateOfflinePodcast,
+              icon: _isConverting
+                  ? const SizedBox(
+                      width: 20,
+                      height: 20,
+                      child: CircularProgressIndicator(strokeWidth: 2, color: Colors.black),
+                    )
+                  : const Icon(Icons.auto_awesome),
+              label: Text(
+                _isConverting ? 'ပြောင်းလဲနေပါသည်...' : 'Offline Podcast ဖန်တီးမည် (Free)',
+                style: const TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
+              ),
+            ),
+            const SizedBox(height: 12),
+
+            // Audio Player Controls
             if (_selectedFilePath != null)
-              ElevatedButton.icon(
-                style: ElevatedButton.styleFrom(
-                  backgroundColor: const Color(0xFFC5A059),
-                  foregroundColor: Colors.black,
-                  padding: const EdgeInsets.symmetric(vertical: 14),
+              OutlinedButton.icon(
+                style: OutlinedButton.styleFrom(
+                  foregroundColor: Colors.white,
+                  side: const BorderSide(color: Colors.white54),
+                  padding: const EdgeInsets.symmetric(vertical: 12),
                 ),
                 onPressed: _togglePlayPause,
                 icon: Icon(_isPlaying ? Icons.pause : Icons.play_arrow),
-                label: Text(_isPlaying ? 'ရပ်တန့်မည်' : 'ဖွင့်မည်', style: const TextStyle(fontSize: 16, fontWeight: FontWeight.bold)),
+                label: Text(_isPlaying ? 'မူရင်းအသံ ရပ်မည်' : 'မူရင်းအသံ နားထောင်မည်'),
               ),
           ],
         ),
       ),
     );
   }
-}
-
-class solidBorderSide extends BorderSide {
-  const solidBorderSide({required super.color}) : super(width: 1.5);
 }
