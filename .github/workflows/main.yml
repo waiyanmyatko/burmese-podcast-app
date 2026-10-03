@@ -25,10 +25,8 @@ jobs:
 
       - name: Initialize Android project files
         run: |
-          flutter create --project-name burmese_podcast_app --org com.waiyan .
-          sed -i 's/compileSdk = flutter.compileSdkVersion/compileSdk = 35/' android/app/build.gradle
-          sed -i 's/compileSdkVersion flutter.compileSdkVersion/compileSdkVersion 35/' android/app/build.gradle
-          sed -i '/<application/i \    <uses-permission android:name="android.permission.INTERNET"/>\n    <uses-permission android:name="android.permission.READ_EXTERNAL_STORAGE"/>' android/app/src/main/AndroidManifest.xml
+          flutter create --project-name burmese_podcast_app --org com.waiyan --platforms=android .
+          find android -name "AndroidManifest.xml" -exec sed -i '/<application/i \    <uses-permission android:name="android.permission.INTERNET"/>\n    <uses-permission android:name="android.permission.READ_EXTERNAL_STORAGE"/>' {} +
 
       - name: Install dependencies
         run: flutter pub get
