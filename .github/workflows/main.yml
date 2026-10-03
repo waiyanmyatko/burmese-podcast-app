@@ -28,22 +28,38 @@ jobs:
           flutter create --project-name burmese_podcast_app --org com.waiyan --platforms=android .
           find android -name "AndroidManifest.xml" -exec sed -i '/<application/i \    <uses-permission android:name="android.permission.INTERNET"/>\n    <uses-permission android:name="android.permission.READ_EXTERNAL_STORAGE"/>' {} +
 
-      - name: Configure Android SDK 35
+      - name: Force Android SDK 35 across all plugins
         run: |
-          # build.gradle သို့မဟုတ် build.gradle.kts ဖိုင်အားလုံးတွင် compileSdk 35 သတ်မှတ်ခြင်း
           python3 -c "
-          import os, glob
-          for path in glob.glob('android/**/*.gradle*', recursive=True):
-              with open(path, 'r') as f:
-                  content = f.read()
-              new_content = content.replace('compileSdk = flutter.compileSdkVersion', 'compileSdk = 35')
-              new_content = new_content.replace('compileSdkVersion flutter.compileSdkVersion', 'compileSdkVersion 35')
-              new_content = new_content.replace('targetSdk = flutter.targetSdkVersion', 'targetSdk = 35')
-              new_content = new_content.replace('targetSdkVersion flutter.targetSdkVersion', 'targetSdkVersion 35')
-              if content != new_content:
-                  with open(path, 'w') as f:
-                      f.write(new_content)
-                  print(f'Patched: {path}')
+          import os
+
+          # android/build.gradle သို့မဟုတ် settings.gradle ထဲ subprojects အားလုံးအတွက် SDK 35 သတ်မှတ်ခြင်း
+          root_gradle = 'android/build.gradle'
+          if os.path.exists(root_gradle):
+              with open(root_gradle, 'a') as f:
+                  f.write('''
+          subprojects {
+              afterEvaluate { project ->
+                  if (project.hasProperty('android')) {
+                      project.android {
+                          compileSdkVersion 35
+                      }
+                  }
+              }
+          }
+          ''')
+              print('Patched root build.gradle')
+
+          # app/build.gradle သို့မဟုတ် app/build.gradle.kts ပြင်ဆင်ခြင်း
+          for p in ['android/app/build.gradle', 'android/app/build.gradle.kts']:
+              if os.path.exists(p):
+                  with open(p, 'r') as f:
+                      txt = f.read()
+                  txt = txt.replace('flutter.compileSdkVersion', '35')
+                  txt = txt.replace('flutter.targetSdkVersion', '35')
+                  with open(p, 'w') as f:
+                      f.write(txt)
+                  print(f'Patched: {p}')
           "
 
       - name: Install dependencies
