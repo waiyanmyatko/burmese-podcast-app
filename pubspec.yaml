@@ -1,7 +1,7 @@
 name: burmese_podcast_app
-description: "WY's PODCAST - Voice Studio"
+description: "A professional Burmese podcast creation app using Flutter and Gemini API."
 publish_to: "none"
-version: 1.0.0+3
+version: 1.0.0+1
 
 environment:
   sdk: ">=3.0.0 <4.0.0"
@@ -11,9 +11,9 @@ dependencies:
     sdk: flutter
   file_picker: ^8.0.0
   audioplayers: ^6.0.0
-  flutter_tts: ^4.0.2
-  shared_preferences: ^2.2.2
   http: ^1.2.0
+  shared_preferences: ^2.2.2
+  path_provider: ^2.1.2
 
 dev_dependencies:
   flutter_test:
