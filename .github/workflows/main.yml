@@ -26,13 +26,25 @@ jobs:
       - name: Initialize Android project files
         run: |
           flutter create --project-name burmese_podcast_app --org com.waiyan --platforms=android .
-          # AndroidManifest ထဲ ခွင့်ပြုချက်များ ထည့်သွင်းခြင်း
           find android -name "AndroidManifest.xml" -exec sed -i '/<application/i \    <uses-permission android:name="android.permission.INTERNET"/>\n    <uses-permission android:name="android.permission.READ_EXTERNAL_STORAGE"/>' {} +
-          # compileSdk နှင့် targetSdk ကို 35 သို့ အလိုအလျောက် သတ်မှတ်ခြင်း
-          find android -name "build.gradle*" -exec sed -i 's/compileSdk = .*/compileSdk = 35/g' {} +
-          find android -name "build.gradle*" -exec sed -i 's/compileSdkVersion .*/compileSdkVersion 35/g' {} +
-          find android -name "build.gradle*" -exec sed -i 's/targetSdk = .*/targetSdk = 35/g' {} +
-          find android -name "build.gradle*" -exec sed -i 's/targetSdkVersion .*/targetSdkVersion 35/g' {} +
+
+      - name: Configure Android SDK 35
+        run: |
+          # build.gradle သို့မဟုတ် build.gradle.kts ဖိုင်အားလုံးတွင် compileSdk 35 သတ်မှတ်ခြင်း
+          python3 -c "
+          import os, glob
+          for path in glob.glob('android/**/*.gradle*', recursive=True):
+              with open(path, 'r') as f:
+                  content = f.read()
+              new_content = content.replace('compileSdk = flutter.compileSdkVersion', 'compileSdk = 35')
+              new_content = new_content.replace('compileSdkVersion flutter.compileSdkVersion', 'compileSdkVersion 35')
+              new_content = new_content.replace('targetSdk = flutter.targetSdkVersion', 'targetSdk = 35')
+              new_content = new_content.replace('targetSdkVersion flutter.targetSdkVersion', 'targetSdkVersion 35')
+              if content != new_content:
+                  with open(path, 'w') as f:
+                      f.write(new_content)
+                  print(f'Patched: {path}')
+          "
 
       - name: Install dependencies
         run: flutter pub get
