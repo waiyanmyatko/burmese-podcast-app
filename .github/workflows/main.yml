@@ -26,7 +26,7 @@ jobs:
 
       - name: Initialize Android project files
         run: |
-          flutter create --org com.waiyan .
+          flutter create --project-name burmese_podcast_app --org com.waiyan .
           sed -i '/<application/i \    <uses-permission android:name="android.permission.INTERNET"/>\n    <uses-permission android:name="android.permission.READ_EXTERNAL_STORAGE"/>' android/app/src/main/AndroidManifest.xml
 
       - name: Install dependencies
