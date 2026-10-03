@@ -28,33 +28,21 @@ jobs:
           flutter create --project-name burmese_podcast_app --org com.waiyan --platforms=android .
           find android -name "AndroidManifest.xml" -exec sed -i '/<application/i \    <uses-permission android:name="android.permission.INTERNET"/>\n    <uses-permission android:name="android.permission.READ_EXTERNAL_STORAGE"/>' {} +
 
-      - name: Set Android SDK 36
+      - name: Force Android SDK 36 Globally via Gradle Init Script
         run: |
-          python3 -c "
-          import os
-
-          # app/build.gradle.kts (Kotlin DSL) ကို compileSdk 36 သို့ တိုက်ရိုက် ပြောင်းလဲခြင်း
-          kts = 'android/app/build.gradle.kts'
-          if os.path.exists(kts):
-              with open(kts, 'r') as f:
-                  data = f.read()
-              data = data.replace('compileSdk = flutter.compileSdkVersion', 'compileSdk = 36')
-              data = data.replace('targetSdk = flutter.targetSdkVersion', 'targetSdk = 36')
-              with open(kts, 'w') as f:
-                  f.write(data)
-              print('Patched build.gradle.kts to SDK 36')
-
-          # app/build.gradle (Groovy DSL) ရှိခဲ့ပါက ပြောင်းလဲခြင်း
-          groovy = 'android/app/build.gradle'
-          if os.path.exists(groovy):
-              with open(groovy, 'r') as f:
-                  data = f.read()
-              data = data.replace('compileSdkVersion flutter.compileSdkVersion', 'compileSdkVersion 36')
-              data = data.replace('targetSdkVersion flutter.targetSdkVersion', 'targetSdkVersion 36')
-              with open(groovy, 'w') as f:
-                  f.write(data)
-              print('Patched build.gradle to SDK 36')
-          "
+          mkdir -p ~/.gradle
+          cat << 'EOF' > ~/.gradle/init.gradle
+          allprojects {
+              afterEvaluate { project ->
+                  if (project.hasProperty('android')) {
+                      project.android {
+                          compileSdkVersion 36
+                      }
+                  }
+              }
+          }
+          EOF
+          echo "Created ~/.gradle/init.gradle to enforce compileSdkVersion 36 everywhere"
 
       - name: Install dependencies
         run: flutter pub get
