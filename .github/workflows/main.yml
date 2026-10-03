@@ -26,7 +26,13 @@ jobs:
       - name: Initialize Android project files
         run: |
           flutter create --project-name burmese_podcast_app --org com.waiyan --platforms=android .
+          # AndroidManifest ထဲ ခွင့်ပြုချက်များ ထည့်သွင်းခြင်း
           find android -name "AndroidManifest.xml" -exec sed -i '/<application/i \    <uses-permission android:name="android.permission.INTERNET"/>\n    <uses-permission android:name="android.permission.READ_EXTERNAL_STORAGE"/>' {} +
+          # compileSdk နှင့် targetSdk ကို 35 သို့ အလိုအလျောက် သတ်မှတ်ခြင်း
+          find android -name "build.gradle*" -exec sed -i 's/compileSdk = .*/compileSdk = 35/g' {} +
+          find android -name "build.gradle*" -exec sed -i 's/compileSdkVersion .*/compileSdkVersion 35/g' {} +
+          find android -name "build.gradle*" -exec sed -i 's/targetSdk = .*/targetSdk = 35/g' {} +
+          find android -name "build.gradle*" -exec sed -i 's/targetSdkVersion .*/targetSdkVersion 35/g' {} +
 
       - name: Install dependencies
         run: flutter pub get
