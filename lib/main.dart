@@ -47,7 +47,7 @@ class _PodcastHomeScreenState extends State<PodcastHomeScreen> with SingleTicker
   final AudioPlayer _sourceAudioPlayer = AudioPlayer();
   final AudioPlayer _podcastAudioPlayer = AudioPlayer();
 
-  // Part 1: Offline STT States
+  // Part 1: STT States
   String? _selectedAudioPath;
   bool _isSourcePlaying = false;
   bool _isTranscribing = false;
@@ -108,6 +108,111 @@ class _PodcastHomeScreenState extends State<PodcastHomeScreen> with SingleTicker
     });
   }
 
+  // --- DIALOGS: HELP, ABOUT, API KEY ---
+  void _showHelpDialog() {
+    showDialog(
+      context: context,
+      builder: (context) => AlertDialog(
+        backgroundColor: const Color(0xFF1E1E1E),
+        title: const Row(
+          children: [
+            Icon(Icons.help_outline, color: Color(0xFFC5A059)),
+            SizedBox(width: 8),
+            Text('Gemini API ရယူနည်း', style: TextStyle(color: Color(0xFFC5A059), fontSize: 18)),
+          ],
+        ),
+        content: const SingleChildScrollView(
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Text(
+                'Gemini API Key ကို အခမဲ့ ရယူရန် အဆင့်များ-',
+                style: TextStyle(fontWeight: FontWeight.bold, color: Colors.white),
+              ),
+              SizedBox(height: 10),
+              Text('၁။ ဖုန်း Browser ဖြင့် aistudio.google.com/app/apikey သို့ သွားရောက်ပါ။', style: TextStyle(fontSize: 13, height: 1.4)),
+              SizedBox(height: 6),
+              Text('၂။ မိမိ၏ Google Account (Gmail) ဖြင့် Sign In ဝင်ပါ။', style: TextStyle(fontSize: 13, height: 1.4)),
+              SizedBox(height: 6),
+              Text('၃။ "Create API key" (သို့မဟုတ် Create API key in new project) ကို နှိပ်ပါ။', style: TextStyle(fontSize: 13, height: 1.4)),
+              SizedBox(height: 6),
+              Text('၄။ ရရှိလာသော AIzaSy... ဖြင့် စတင်သည့် Key ကို Copy ကူးပါ။', style: TextStyle(fontSize: 13, height: 1.4)),
+              SizedBox(height: 6),
+              Text('၅။ App ပေါ်ရှိ သော့ပုံ (Key Icon) ကို နှိပ်ပြီး Paste ချကာ သိမ်းဆည်းပါ။', style: TextStyle(fontSize: 13, height: 1.4)),
+              SizedBox(height: 12),
+              Text('* တစ်ကြိမ်သာ ထည့်သွင်းရန် လိုအပ်ပြီး အမြဲတမ်း အသုံးပြုနိုင်ပါသည်။', style: TextStyle(fontSize: 12, color: Color(0xFFC5A059))),
+            ],
+          ),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () {
+              Clipboard.setData(const ClipboardData(text: "https://aistudio.google.com/app/apikey"));
+              ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Website Link ကို Copy ကူးပြီးပါပြီ')));
+            },
+            child: const Text('Link ကူးမည်', style: TextStyle(color: Color(0xFFC5A059))),
+          ),
+          ElevatedButton(
+            style: ElevatedButton.styleFrom(backgroundColor: const Color(0xFFC5A059)),
+            onPressed: () => Navigator.pop(context),
+            child: const Text('နားလည်ပါပြီ', style: TextStyle(color: Colors.black)),
+          ),
+        ],
+      ),
+    );
+  }
+
+  void _showAboutDialog() {
+    showDialog(
+      context: context,
+      builder: (context) => AlertDialog(
+        backgroundColor: const Color(0xFF1E1E1E),
+        title: const Text("WY's PODCAST", style: TextStyle(color: Color(0xFFC5A059), fontWeight: FontWeight.bold)),
+        content: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            const Text('ဗားရှင်း: 1.0.0', style: TextStyle(fontSize: 12, color: Colors.white54)),
+            const SizedBox(height: 12),
+            const Text(
+              'ရည်ရွယ်ချက် (Vision):',
+              style: TextStyle(fontWeight: FontWeight.bold, color: Color(0xFFC5A059)),
+            ),
+            const SizedBox(height: 6),
+            const Text(
+              'ဘာသာစကား အခက်အခဲကြောင့် ခေတ်မီနည်းပညာများနှင့် အသိပညာဗဟုသုတများ ရယူရာတွင် အဟန့်အတား မဖြစ်စေရန် ရည်ရွယ်ပါသည်။ မည်သူမဆို AI နည်းပညာကို အလွယ်တကူ လက်တွေ့အသုံးချပြီး နိုင်ငံတကာမှ အကြောင်းအရာများကို မြန်မာဘာသာဖြင့် လေ့လာဖန်တီးနိုင်သော Podcast စနစ်အဖြစ် ရည်ရွယ်တည်ဆောက်ထားခြင်း ဖြစ်ပါသည်။',
+              style: TextStyle(fontSize: 13, height: 1.5, color: Colors.white70),
+            ),
+            const Divider(color: Colors.white24, height: 24),
+            const Text('Developer & Contact:', style: TextStyle(fontWeight: FontWeight.bold, color: Colors.white)),
+            const SizedBox(height: 6),
+            InkWell(
+              onTap: () {
+                Clipboard.setData(const ClipboardData(text: "@seniorwaiyan"));
+                ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Telegram username ကို Copy ကူးပြီးပါပြီ')));
+              },
+              child: const Row(
+                children: [
+                  Icon(Icons.send, size: 16, color: Color(0xFFC5A059)),
+                  SizedBox(width: 6),
+                  Text('Telegram: @seniorwaiyan', style: TextStyle(color: Color(0xFFC5A059), fontWeight: FontWeight.w600)),
+                ],
+              ),
+            ),
+          ],
+        ),
+        actions: [
+          ElevatedButton(
+            style: ElevatedButton.styleFrom(backgroundColor: const Color(0xFFC5A059)),
+            onPressed: () => Navigator.pop(context),
+            child: const Text('ပိတ်မည်', style: TextStyle(color: Colors.black)),
+          ),
+        ],
+      ),
+    );
+  }
+
   Future<void> _saveSettingsDialog() async {
     final geminiController = TextEditingController(text: _geminiApiKey);
 
@@ -120,7 +225,7 @@ class _PodcastHomeScreenState extends State<PodcastHomeScreen> with SingleTicker
           mainAxisSize: MainAxisSize.min,
           children: [
             const Text(
-              'Gemini API Key ထည့်သွင်းပေးပါ။',
+              'Gemini API Key ကို ထည့်သွင်းသိမ်းဆည်းပေးပါ။',
               style: TextStyle(fontSize: 12, color: Colors.white70),
             ),
             const SizedBox(height: 12),
@@ -154,11 +259,11 @@ class _PodcastHomeScreenState extends State<PodcastHomeScreen> with SingleTicker
     );
   }
 
-  // --- PART 1: AUDIO TO TEXT ---
+  // --- PART 1: AUDIO TO TEXT ENGINE ---
   Future<void> _pickAudioFile() async {
     final result = await FilePicker.platform.pickFiles(
       type: FileType.custom,
-      allowedExtensions: ['mp3', 'm4a', 'wav', 'aac', 'mp4'],
+      allowedExtensions: ['mp3', 'm4a', 'wav', 'aac'],
     );
     if (result != null && result.files.single.path != null) {
       setState(() => _selectedAudioPath = result.files.single.path);
@@ -179,23 +284,62 @@ class _PodcastHomeScreenState extends State<PodcastHomeScreen> with SingleTicker
   Future<void> _transcribeAudio() async {
     if (_selectedAudioPath == null) {
       ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Audio ဖိုင် အရင်ရွေးချယ်ပါ')),
+        const SnackBar(content: Text('အသံဖိုင် အရင်ရွေးချယ်ပေးပါ')),
       );
+      return;
+    }
+    if (_geminiApiKey.isEmpty) {
+      _saveSettingsDialog();
       return;
     }
 
     setState(() => _isTranscribing = true);
 
     try {
-      await Future.delayed(const Duration(seconds: 2));
-      setState(() {
-        _isTranscribing = false;
-        _extractedTextController.text =
-            "Artificial intelligence is transforming podcasting and content creation worldwide. In this episode, we explore the capabilities of on-device automation and natural speech synthesis.";
-      });
+      final bytes = await File(_selectedAudioPath!).readAsBytes();
+      final base64Audio = base64Encode(bytes);
+
+      String mimeType = "audio/mp3";
+      if (_selectedAudioPath!.endsWith(".wav")) mimeType = "audio/wav";
+      if (_selectedAudioPath!.endsWith(".m4a")) mimeType = "audio/m4a";
+      if (_selectedAudioPath!.endsWith(".aac")) mimeType = "audio/aac";
+
+      final url = Uri.parse("https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=$_geminiApiKey");
+      final response = await http.post(
+        url,
+        headers: {'Content-Type': 'application/json'},
+        body: jsonEncode({
+          "contents": [
+            {
+              "parts": [
+                {
+                  "inlineData": {
+                    "mimeType": mimeType,
+                    "data": base64Audio
+                  }
+                },
+                {
+                  "text": "Please accurately transcribe all spoken audio from this file into written text verbatim."
+                }
+              ]
+            }
+          ]
+        }),
+      );
+
+      if (response.statusCode == 200) {
+        final data = jsonDecode(response.body);
+        final resultText = data['candidates']?[0]?['content']?['parts']?[0]?['text'] ?? "စာသား မရရှိပါ";
+        setState(() {
+          _isTranscribing = false;
+          _extractedTextController.text = resultText;
+        });
+      } else {
+        throw Exception("STT API Error: ${response.statusCode}");
+      }
     } catch (e) {
       setState(() => _isTranscribing = false);
-      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Transcription error: $e')));
+      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Transcription အမှား: $e')));
     }
   }
 
@@ -221,7 +365,7 @@ class _PodcastHomeScreenState extends State<PodcastHomeScreen> with SingleTicker
     }
   }
 
-  // စာပိုဒ် အလိုအလျောက် ပိုင်းဖြတ်ခြင်း (Sentence-based chunking)
+  // Sentence-based chunking
   List<String> _splitTextIntoChunks(String text, int maxLength) {
     List<String> chunks = [];
     List<String> sentences = text.split(RegExp(r'(?<=[။\n\.])'));
@@ -242,7 +386,7 @@ class _PodcastHomeScreenState extends State<PodcastHomeScreen> with SingleTicker
   Future<String> _callGeminiPodcastScript(String rawContent) async {
     String instruction = "";
     if (_promptMode == 'For Point') {
-      instruction = "အောက်ပါစာသားကို နားဆင်ရလွယ်ကူသော မြန်မာ Podcast ဇာတ်ညွှန်းအဖြစ် အဓိက အချက်များ (Bullet points) သီးသန့် မြန်မာလို ရေးသားပေးပါ:";
+      instruction = "အောက်ပါစာသားကို နားဆင်ရလွယ်ကူပြီး စိတ်ဝင်စားဖွယ်ကောင်းသော မြန်မာ Podcast ဇာတ်ညွှန်းအဖြစ် အဓိက အချက်များ (Bullet points) သီးသန့် မြန်မာလို ရေးပေးပါ:";
     } else if (_promptMode == 'For Length') {
       instruction = "အောက်ပါစာသားကို မြန်မာဘာသာ Podcast အစီအစဉ်တစ်ခုကဲ့သို့ အသေးစိတ် ပြည့်စုံစွာ၊ သဘာဝကျသော အသုံးအနှုန်းများဖြင့် မြန်မာလို အပြည့်အစုံ ရေးပေးပါ:";
     } else {
@@ -266,47 +410,25 @@ class _PodcastHomeScreenState extends State<PodcastHomeScreen> with SingleTicker
 
     if (response.statusCode == 200) {
       final data = jsonDecode(response.body);
-      return data['candidates']?[0]?['content']?['parts']?[0]?['text'] ?? "စာသား မရရှိပါ";
+      return data['candidates']?[0]?['content']?['parts']?[0]?['text'] ?? rawContent;
     } else {
       throw Exception("Gemini Script Error: ${response.statusCode}");
     }
   }
 
-  Future<Uint8List?> _fetchAudioBytesForChunk(String chunkText) async {
-    final url = Uri.parse("https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=$_geminiApiKey");
-    final voicePrompt = "Read this text naturally as a $_selectedGender speaker in $_selectedStyle style: \n$chunkText";
+  // Reliable Audio Downloader per Chunk
+  Future<Uint8List?> _downloadChunkAudio(String text) async {
+    try {
+      final encoded = Uri.encodeComponent(text);
+      final ttsUrl = Uri.parse("https://translate.google.com/translate_tts?ie=UTF-8&tl=my&client=tw-ob&q=$encoded");
+      final resp = await http.get(ttsUrl, headers: {
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)'
+      });
 
-    final response = await http.post(
-      url,
-      headers: {'Content-Type': 'application/json'},
-      body: jsonEncode({
-        "contents": [
-          {"parts": [{"text": voicePrompt}]}
-        ],
-        "generationConfig": {
-          "responseModalities": ["AUDIO", "TEXT"],
-          "speechConfig": {
-            "voiceConfig": {
-              "prebuiltVoiceConfig": {
-                "voiceName": _selectedGender == 'Female' ? "Kore" : "Puck"
-              }
-            }
-          }
-        }
-      }),
-    );
-
-    if (response.statusCode == 200) {
-      final data = jsonDecode(response.body);
-      final parts = data['candidates']?[0]?['content']?['parts'] as List<dynamic>?;
-      if (parts != null) {
-        for (var p in parts) {
-          if (p.containsKey('inlineData')) {
-            return base64Decode(p['inlineData']['data']);
-          }
-        }
+      if (resp.statusCode == 200) {
+        return resp.bodyBytes;
       }
-    }
+    } catch (_) {}
     return null;
   }
 
@@ -336,15 +458,15 @@ class _PodcastHomeScreenState extends State<PodcastHomeScreen> with SingleTicker
       }
       setState(() => _outputBurmeseScript = finalScript);
 
-      List<String> chunks = _splitTextIntoChunks(finalScript, 250);
+      List<String> chunks = _splitTextIntoChunks(finalScript, 100);
       List<int> fullAudioBytes = [];
 
       for (int i = 0; i < chunks.length; i++) {
         setState(() {
-          _generationStatus = 'အသံအပိုင်း (${i + 1}/${chunks.length}) ထုတ်လုပ်နေပါသည်...';
+          _generationStatus = 'အသံဖိုင် အပိုင်း (${i + 1}/${chunks.length}) ပေါင်းစပ်နေပါသည်...';
         });
 
-        Uint8List? audioBytes = await _fetchAudioBytesForChunk(chunks[i]);
+        Uint8List? audioBytes = await _downloadChunkAudio(chunks[i]);
         if (audioBytes != null) {
           fullAudioBytes.addAll(audioBytes);
         }
@@ -361,13 +483,17 @@ class _PodcastHomeScreenState extends State<PodcastHomeScreen> with SingleTicker
           _generationStatus = 'အောင်မြင်စွာ ဖန်တီးပြီးစီးပါပြီ!';
         });
       } else {
-        throw Exception("အသံအပိုင်းများ ပေါင်းစပ်၍ မရရှိပါ");
+        setState(() {
+          _isGeneratingPodcast = false;
+          _generationStatus = 'Script ရရှိပါသည် (အသံပိုင်း ကျော်လွန်သည်)';
+        });
       }
     } catch (e) {
       setState(() {
         _isGeneratingPodcast = false;
         _generationStatus = 'အမှား: $e';
       });
+      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('အမှားဖြစ်ပေါ်ပါသည်: $e')));
     }
   }
 
@@ -425,8 +551,18 @@ class _PodcastHomeScreenState extends State<PodcastHomeScreen> with SingleTicker
         elevation: 0,
         actions: [
           IconButton(
+            icon: const Icon(Icons.help_outline, color: Color(0xFFC5A059)),
+            tooltip: 'Gemini API ယူနည်း',
+            onPressed: _showHelpDialog,
+          ),
+          IconButton(
+            icon: const Icon(Icons.info_outline, color: Color(0xFFC5A059)),
+            tooltip: 'About Us',
+            onPressed: _showAboutDialog,
+          ),
+          IconButton(
             icon: const Icon(Icons.vpn_key, color: Color(0xFFC5A059)),
-            tooltip: 'Gemini API Key',
+            tooltip: 'API Key',
             onPressed: _saveSettingsDialog,
           ),
         ],
@@ -464,7 +600,7 @@ class _PodcastHomeScreenState extends State<PodcastHomeScreen> with SingleTicker
                             style: ElevatedButton.styleFrom(backgroundColor: const Color(0xFFC5A059), foregroundColor: Colors.black),
                             onPressed: _pickAudioFile,
                             icon: const Icon(Icons.file_upload),
-                            label: const Text('အသံဖိုင် (Audio/Video) ရွေးပါ', style: TextStyle(fontWeight: FontWeight.bold)),
+                            label: const Text('အသံဖိုင် (Audio) ရွေးပါ', style: TextStyle(fontWeight: FontWeight.bold)),
                           ),
                           if (_selectedAudioPath != null) ...[
                             const SizedBox(height: 8),
@@ -490,7 +626,7 @@ class _PodcastHomeScreenState extends State<PodcastHomeScreen> with SingleTicker
                     icon: _isTranscribing
                         ? const SizedBox(width: 18, height: 18, child: CircularProgressIndicator(strokeWidth: 2, color: Color(0xFFC5A059)))
                         : const Icon(Icons.translate),
-                    label: Text(_isTranscribing ? 'စာသားပြောင်းနေပါသည်...' : 'စာသားပြောင်းမည် (Offline STT)'),
+                    label: Text(_isTranscribing ? 'စာသားပြောင်းနေပါသည်...' : 'စာသားပြောင်းမည် (Audio to Text)'),
                   ),
                   const SizedBox(height: 16),
                   Card(
@@ -504,7 +640,7 @@ class _PodcastHomeScreenState extends State<PodcastHomeScreen> with SingleTicker
                           Row(
                             mainAxisAlignment: MainAxisAlignment.spaceBetween,
                             children: [
-                              const Text('ရရှိလာသော အင်္ဂလိပ်စာသား:', style: TextStyle(fontWeight: FontWeight.bold, color: Color(0xFFC5A059))),
+                              const Text('ရရှိလာသော စာသား:', style: TextStyle(fontWeight: FontWeight.bold, color: Color(0xFFC5A059))),
                               IconButton(
                                 icon: const Icon(Icons.copy, size: 20, color: Colors.white70),
                                 onPressed: () {
@@ -699,6 +835,40 @@ class _PodcastHomeScreenState extends State<PodcastHomeScreen> with SingleTicker
                         : const Icon(Icons.auto_awesome),
                     label: Text(_isGeneratingPodcast ? _generationStatus : 'Podcast ထုတ်လုပ်မည် (Generate Full Audio)', style: const TextStyle(fontWeight: FontWeight.bold)),
                   ),
+                  
+                  // Output Script Box
+                  if (_outputBurmeseScript.isNotEmpty) ...[
+                    const SizedBox(height: 16),
+                    Card(
+                      color: const Color(0xFF1E1E1E),
+                      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+                      child: Padding(
+                        padding: const EdgeInsets.all(16.0),
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.stretch,
+                          children: [
+                            Row(
+                              mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                              children: [
+                                const Text('SCRIPT ရလဒ်', style: TextStyle(fontWeight: FontWeight.bold, color: Color(0xFFC5A059))),
+                                IconButton(
+                                  icon: const Icon(Icons.copy, size: 20, color: Colors.white70),
+                                  onPressed: () {
+                                    Clipboard.setData(ClipboardData(text: _outputBurmeseScript));
+                                    ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Script Copy ကူးပြီးပါပြီ')));
+                                  },
+                                ),
+                              ],
+                            ),
+                            const Divider(color: Colors.white24),
+                            SelectableText(_outputBurmeseScript, style: const TextStyle(fontSize: 14, height: 1.6)),
+                          ],
+                        ),
+                      ),
+                    ),
+                  ],
+
+                  // Audio Player Box
                   if (_fullAudioPath != null) ...[
                     const SizedBox(height: 16),
                     Card(
