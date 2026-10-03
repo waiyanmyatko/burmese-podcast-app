@@ -1,48 +1,115 @@
 import 'dart:convert';
 import 'dart:io';
-import 'dart:typed_data';
 import 'package:flutter/material.dart';
-import 'package:http/http.dart' as http;
 import 'package:file_picker/file_picker.dart';
 import 'package:audioplayers/audioplayers.dart';
-import 'package:path_provider/path_provider.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 
 void main() {
-  runApp(const MaterialApp(
-    home: AudioPodcastApp(),
-    debugShowCheckedModeBanner: false,
-  ));
+  runApp(const BurmesePodcastApp());
 }
 
-class AudioPodcastApp extends StatefulWidget {
-  const AudioPodcastApp({super.key});
+class BurmesePodcastApp extends StatelessWidget {
+  const BurmesePodcastApp({super.key});
 
   @override
-  State<AudioPodcastApp> createState() => _AudioPodcastAppState();
+  Widget build(BuildContext context) {
+    return MaterialApp(
+      title: "WY's PODCAST",
+      debugShowCheckedModeBanner: false,
+      theme: ThemeData(
+        brightness: Brightness.dark,
+        primaryColor: const Color(0xFFC5A059),
+        scaffoldBackgroundColor: const Color(0xFF121212),
+        colorScheme: const ColorScheme.dark(
+          primary: Color(0xFFC5A059),
+          secondary: Color(0xFFDFBA73),
+        ),
+      ),
+      home: const PodcastHomeScreen(),
+    );
+  }
 }
 
-class _AudioPodcastAppState extends State<AudioPodcastApp> {
-  // သင်၏ API Keys များကို ဤနေရာတွင် ထည့်ပါ (မထည့်ရသေးပါက နောက်မှ ပြန်ပြင်၍ ရပါသည်)
-  final String groqApiKey = "YOUR_GROQ_API_KEY";
-  final String geminiApiKey = "YOUR_GEMINI_API_KEY";
-  final String googleTtsApiKey = "YOUR_GOOGLE_CLOUD_TTS_API_KEY";
+class PodcastHomeScreen extends StatefulWidget {
+  const PodcastHomeScreen({super.key});
 
-  String statusText = "Audio ဖိုင်တစ်ခု ရွေးချယ်ပါ";
-  bool isProcessing = false;
-  String? generatedBurmeseText;
-  String? finalAudioPath;
+  @override
+  State<PodcastHomeScreen> createState() => _PodcastHomeScreenState();
+}
 
+class _PodcastHomeScreenState extends State<PodcastHomeScreen> {
   final AudioPlayer _audioPlayer = AudioPlayer();
-  bool isPlaying = false;
+  String? _selectedFilePath;
+  bool _isPlaying = false;
+
+  // Custom Voice Settings
+  String _selectedStyle = 'Podcast';
+  String _selectedGender = 'Male';
+  double _pitch = 1.0;
+  double _speed = 1.0;
 
   @override
   void initState() {
     super.initState();
-    _audioPlayer.onPlayerStateChanged.listen((state) {
-      setState(() {
-        isPlaying = state == PlayerState.playing;
-      });
+    _loadDefaultSettings();
+    _audioPlayer.onPlayerComplete.listen((_) {
+      setState(() => _isPlaying = false);
     });
+  }
+
+  // Load Saved Defaults
+  Future<void> _loadDefaultSettings() async {
+    final prefs = await SharedPreferences.getInstance();
+    setState(() {
+      _selectedStyle = prefs.getString('default_style') ?? 'Podcast';
+      _selectedGender = prefs.getString('default_gender') ?? 'Male';
+      _pitch = prefs.getDouble('default_pitch') ?? 1.0;
+      _speed = prefs.getDouble('default_speed') ?? 1.0;
+    });
+  }
+
+  // Save Settings as New Default
+  Future<void> _saveAsNewDefault() async {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setString('default_style', _selectedStyle);
+    await prefs.setString('default_gender', _selectedGender);
+    await prefs.setDouble('default_pitch', _pitch);
+    await prefs.setDouble('default_speed', _speed);
+
+    if (mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Setting အသစ်ကို Default အဖြစ် မှတ်ထားပြီးပါပြီ။')),
+      );
+    }
+  }
+
+  // Pick Media File
+  Future<void> _pickAudioFile() async {
+    final result = await FilePicker.platform.pickFiles(
+      type: FileType.custom,
+      allowedExtensions: ['mp3', 'm4a', 'wav', 'aac', 'mp4'],
+    );
+
+    if (result != null && result.files.single.path != null) {
+      setState(() {
+        _selectedFilePath = result.files.single.path;
+      });
+    }
+  }
+
+  // Play / Pause Audio
+  Future<void> _togglePlayPause() async {
+    if (_selectedFilePath == null) return;
+
+    if (_isPlaying) {
+      await _audioPlayer.pause();
+      setState(() => _isPlaying = false);
+    } else {
+      await _audioPlayer.setPlaybackRate(_speed);
+      await _audioPlayer.play(DeviceFileSource(_selectedFilePath!));
+      setState(() => _isPlaying = true);
+    }
   }
 
   @override
@@ -51,246 +118,146 @@ class _AudioPodcastAppState extends State<AudioPodcastApp> {
     super.dispose();
   }
 
-  Future<void> pickAndProcessAudio() async {
-    FilePickerResult? result = await FilePicker.platform.pickFiles(
-      type: FileType.custom,
-      allowedExtensions: ['mp3', 'wav', 'm4a'],
-    );
-
-    if (result == null || result.files.single.path == null) return;
-
-    File audioFile = File(result.files.single.path!);
-    setState(() {
-      isProcessing = true;
-      statusText = "အသံဖိုင်မှ စာသားရယူနေပါသည် (Whisper)...";
-    });
-
-    try {
-      String engText = await convertAudioToEnglishText(audioFile);
-
-      setState(() {
-        statusText = "မြန်မာ Podcast စတိုင်သို့ ပြောင်းလဲရေးဖွဲ့နေပါသည် (Gemini)...";
-      });
-
-      String mmPodcastText = await convertToBurmesePodcast(engText);
-      setState(() {
-        generatedBurmeseText = mmPodcastText;
-        statusText = "မြန်မာအသံဖိုင် ထုတ်လုပ်နေပါသည် (Google TTS)...";
-      });
-
-      String outputPath = await generateCombinedBurmeseAudio(mmPodcastText);
-
-      setState(() {
-        finalAudioPath = outputPath;
-        statusText = "Podcast အောင်မြင်စွာ ထုတ်လုပ်ပြီးပါပြီ။ နားဆင်နိုင်ပါပြီ။";
-        isProcessing = false;
-      });
-    } catch (e) {
-      setState(() {
-        statusText = "ချို့ယွင်းချက်ဖြစ်ပေါ်ပါသည်- $e";
-        isProcessing = false;
-      });
-    }
-  }
-
-  Future<String> convertAudioToEnglishText(File audioFile) async {
-    var request = http.MultipartRequest(
-      'POST',
-      Uri.parse('https://api.groq.com/openai/v1/audio/transcriptions'),
-    );
-    request.headers['Authorization'] = 'Bearer $groqApiKey';
-    request.fields['model'] = 'whisper-large-v3';
-    request.files.add(await http.MultipartFile.fromPath('file', audioFile.path));
-
-    var response = await request.send();
-    var responseData = await response.stream.bytesToString();
-    var json = jsonDecode(responseData);
-
-    if (response.statusCode == 200) {
-      return json['text'];
-    } else {
-      throw Exception("Whisper Error: ${json['error']?['message'] ?? responseData}");
-    }
-  }
-
-  Future<String> convertToBurmesePodcast(String englishText) async {
-    final url = Uri.parse(
-      'https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=$geminiApiKey',
-    );
-
-    final prompt = '''
-You are a Burmese podcast creator.
-Take the following English transcription and rewrite it into a smooth, natural, and engaging Burmese spoken podcast script (မြန်မာစကားပြော ပေါ့ကတ်စ် စတိုင်).
-Do NOT translate it word-by-word like a book. Use conversational Burmese, friendly tone, natural phrasing, and smooth storytelling flow.
-Only provide the Burmese script, no meta explanations.
-
-English text:
-$englishText
-''';
-
-    final response = await http.post(
-      url,
-      headers: {'Content-Type': 'application/json'},
-      body: jsonEncode({
-        "contents": [
-          {
-            "parts": [
-              {"text": prompt}
-            ]
-          }
-        ]
-      }),
-    );
-
-    final json = jsonDecode(response.body);
-    if (response.statusCode == 200) {
-      return json['candidates'][0]['content']['parts'][0]['text'];
-    } else {
-      throw Exception("Gemini Error: ${json['error']?['message'] ?? response.body}");
-    }
-  }
-
-  Future<String> generateCombinedBurmeseAudio(String script) async {
-    List<String> chunks = splitText(script, 1000);
-    List<Uint8List> audioBytesList = [];
-
-    for (var chunk in chunks) {
-      final url = Uri.parse(
-        'https://texttospeech.googleapis.com/v1/text:synthesize?key=$googleTtsApiKey',
-      );
-
-      final response = await http.post(
-        url,
-        headers: {'Content-Type': 'application/json'},
-        body: jsonEncode({
-          "input": {"text": chunk},
-          "voice": {
-            "languageCode": "my-MM",
-            "name": "my-MM-Standard-A"
-          },
-          "audioConfig": {
-            "audioEncoding": "MP3",
-            "speakingRate": 1.0
-          }
-        }),
-      );
-
-      if (response.statusCode == 200) {
-        final data = jsonDecode(response.body);
-        Uint8List bytes = base64Decode(data['audioContent']);
-        audioBytesList.add(bytes);
-      } else {
-        throw Exception("TTS Error: ${response.body}");
-      }
-    }
-
-    final dir = await getTemporaryDirectory();
-    final outputFile = File('${dir.path}/final_podcast_${DateTime.now().millisecondsSinceEpoch}.mp3');
-    final sink = outputFile.openWrite();
-    
-    for (var chunkBytes in audioBytesList) {
-      sink.add(chunkBytes);
-    }
-    await sink.flush();
-    await sink.close();
-
-    return outputFile.path;
-  }
-
-  List<String> splitText(String text, int maxLength) {
-    List<String> chunks = [];
-    int start = 0;
-    while (start < text.length) {
-      int end = (start + maxLength < text.length) ? start + maxLength : text.length;
-      chunks.add(text.substring(start, end));
-      start = end;
-    }
-    return chunks;
-  }
-
-  void togglePlayPause() async {
-    if (finalAudioPath == null) return;
-    if (isPlaying) {
-      await _audioPlayer.pause();
-    } else {
-      await _audioPlayer.play(DeviceFileSource(finalAudioPath!));
-    }
-  }
-
   @override
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: AppBar(
-        title: const Text("Audio to Burmese Podcast"),
+        title: const Text("WY's PODCAST", style: TextStyle(fontWeight: FontWeight.bold)),
         centerTitle: true,
-        backgroundColor: Colors.deepPurple,
-        foregroundColor: Colors.white,
+        backgroundColor: const Color(0xFF1E1E1E),
+        elevation: 0,
       ),
-      body: Padding(
+      body: SingleChildScrollView(
         padding: const EdgeInsets.all(16.0),
         child: Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
-            ElevatedButton.icon(
-              onPressed: isProcessing ? null : pickAndProcessAudio,
-              icon: const Icon(Icons.upload_file),
-              label: const Text("Audio ဖိုင်ရွေးပြီး စတင်ပါ"),
-              style: ElevatedButton.styleFrom(
-                backgroundColor: Colors.deepPurple,
-                foregroundColor: Colors.white,
-                padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 12),
+            // Upload Container
+            Card(
+              color: const Color(0xFF1E1E1E),
+              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+              child: Padding(
+                padding: const EdgeInsets.all(20.0),
+                child: Column(
+                  children: [
+                    const Icon(Icons.mic, size: 48, color: Color(0xFFC5A059)),
+                    const SizedBox(height: 12),
+                    ElevatedButton.icon(
+                      style: ElevatedButton.styleFrom(
+                        backgroundColor: const Color(0xFFC5A059),
+                        foregroundColor: Colors.black,
+                        padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 12),
+                      ),
+                      onPressed: _pickAudioFile,
+                      icon: const Icon(Icons.file_upload),
+                      label: const Text('Audio / Video ဖိုင်ရွေးပါ', style: TextStyle(fontWeight: FontWeight.bold)),
+                    ),
+                    const SizedBox(height: 12),
+                    Text(
+                      _selectedFilePath != null
+                          ? _selectedFilePath!.split('/').last
+                          : 'ဖိုင်ရွေးချယ်ထားခြင်း မရှိသေးပါ',
+                      style: const TextStyle(color: Colors.white70),
+                      textAlign: TextAlign.center,
+                    ),
+                  ],
+                ),
               ),
             ),
             const SizedBox(height: 20),
-            if (isProcessing) const CircularProgressIndicator(),
-            const SizedBox(height: 10),
-            Text(
-              statusText,
-              textAlign: TextAlign.center,
-              style: const TextStyle(fontSize: 15, fontWeight: FontWeight.w500),
-            ),
-            const Divider(height: 30),
-            if (finalAudioPath != null) ...[
-              Card(
-                color: Colors.deepPurple.shade50,
-                child: ListTile(
-                  leading: IconButton(
-                    icon: Icon(isPlaying ? Icons.pause_circle_filled : Icons.play_circle_fill),
-                    iconSize: 40,
-                    color: Colors.deepPurple,
-                    onPressed: togglePlayPause,
-                  ),
-                  title: const Text("Final Burmese Podcast"),
-                  subtitle: Text(isPlaying ? "Playing..." : "Paused"),
-                ),
-              ),
-              const SizedBox(height: 10),
-            ],
-            if (generatedBurmeseText != null) ...[
-              const Align(
-                alignment: Alignment.centerLeft,
-                child: Text("ထွက်ရှိလာသော Podcast စာသား-", style: TextStyle(fontWeight: FontWeight.bold)),
-              ),
-              const SizedBox(height: 5),
-              Expanded(
-                child: Container(
-                  padding: const EdgeInsets.all(12),
-                  decoration: BoxDecoration(
-                    color: Colors.grey.shade100,
-                    borderRadius: BorderRadius.circular(8),
-                    border: Border.all(color: Colors.grey.shade300),
-                  ),
-                  child: SingleChildScrollView(
-                    child: Text(
-                      generatedBurmeseText!,
-                      style: const TextStyle(fontSize: 14, height: 1.6),
+
+            // Voice Customization Settings
+            Card(
+              color: const Color(0xFF1E1E1E),
+              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+              child: Padding(
+                padding: const EdgeInsets.all(16.0),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    const Text('အသံ Setting များ ချိန်ညှိရန်', style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold, color: Color(0xFFC5A059))),
+                    const SizedBox(height: 16),
+                    Row(
+                      mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                      children: [
+                        const Text('Voice Style:'),
+                        DropdownButton<String>(
+                          value: _selectedStyle,
+                          dropdownColor: const Color(0xFF2A2A2A),
+                          items: ['Podcast', 'Tutor', 'Storytelling'].map((s) => DropdownMenuItem(value: s, child: Text(s))).toList(),
+                          onChanged: (val) => setState(() => _selectedStyle = val!),
+                        ),
+                      ],
                     ),
-                  ),
+                    Row(
+                      mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                      children: [
+                        const Text('Voice Gender:'),
+                        DropdownButton<String>(
+                          value: _selectedGender,
+                          dropdownColor: const Color(0xFF2A2A2A),
+                          items: ['Male', 'Female'].map((g) => DropdownMenuItem(value: g, child: Text(g))).toList(),
+                          onChanged: (val) => setState(() => _selectedGender = val!),
+                        ),
+                      ],
+                    ),
+                    const SizedBox(height: 8),
+                    Text('Pitch (အသံ အနိမ့်/အမြင့်): ${_pitch.toStringAsFixed(1)}x'),
+                    Slider(
+                      value: _pitch,
+                      min: 0.5,
+                      max: 2.0,
+                      divisions: 15,
+                      activeColor: const Color(0xFFC5A059),
+                      onChanged: (val) => setState(() => _pitch = val),
+                    ),
+                    Text('Speed (အမြန်နှုန်း): ${_speed.toStringAsFixed(1)}x'),
+                    Slider(
+                      value: _speed,
+                      min: 0.5,
+                      max: 2.0,
+                      divisions: 15,
+                      activeColor: const Color(0xFFC5A059),
+                      onChanged: (val) => setState(() => _speed = val),
+                    ),
+                    const SizedBox(height: 8),
+                    SizedBox(
+                      width: double.infinity,
+                      child: OutlinedButton.icon(
+                        style: OutlinedButton.styleFrom(
+                          foregroundColor: const Color(0xFFC5A059),
+                          side: const solidBorderSide(color: Color(0xFFC5A059)),
+                        ),
+                        onPressed: _saveAsNewDefault,
+                        icon: const Icon(Icons.bookmark),
+                        label: const Text('Save as Default (မူလအတိုင်း အမြဲထားမည်)'),
+                      ),
+                    ),
+                  ],
                 ),
               ),
-            ],
+            ),
+            const SizedBox(height: 20),
+
+            // Playback controls
+            if (_selectedFilePath != null)
+              ElevatedButton.icon(
+                style: ElevatedButton.styleFrom(
+                  backgroundColor: const Color(0xFFC5A059),
+                  foregroundColor: Colors.black,
+                  padding: const EdgeInsets.symmetric(vertical: 14),
+                ),
+                onPressed: _togglePlayPause,
+                icon: Icon(_isPlaying ? Icons.pause : Icons.play_arrow),
+                label: Text(_isPlaying ? 'ရပ်တန့်မည်' : 'ဖွင့်မည်', style: const TextStyle(fontSize: 16, fontWeight: FontWeight.bold)),
+              ),
           ],
         ),
       ),
     );
   }
+}
+
+class solidBorderSide extends BorderSide {
+  const solidBorderSide({required super.color}) : super(width: 1.5);
 }
