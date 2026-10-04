@@ -25,15 +25,16 @@ jobs:
           channel: 'stable'
           cache: true
 
-      - name: Set up Android NDK & CMake
-        uses: nttld/setup-ndk@v1
-        with:
-          ndk-version: r25c
-          cmake-version: 3.22.1
-
       - name: Recreate Android Project Folder
         run: |
           flutter create . --platforms=android --org com.waiyan.burmesepodcast
+
+      - name: Accept Android Licenses & Link NDK
+        run: |
+          yes | flutter doctor --android-licenses || true
+          NDK_PATH=$(find $ANDROID_SDK_ROOT/ndk -maxdepth 1 -mindepth 1 | sort -V | tail -n 1)
+          echo "Found NDK at: $NDK_PATH"
+          echo "ndk.dir=$NDK_PATH" >> android/local.properties
 
       - name: Configure Android minSdkVersion
         run: |
