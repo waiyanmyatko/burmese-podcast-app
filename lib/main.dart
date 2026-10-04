@@ -1,7 +1,6 @@
 import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
-import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
@@ -13,6 +12,9 @@ void main() {
 const Color goldAccent = Color(0xFFD4AF37);
 const Color cardBg = Color(0xFF1E1E22);
 const Color darkBg = Color(0xFF121214);
+
+const MethodChannel _filePickerChannel =
+    MethodChannel('com.waiyan.burmesepodcast/file_picker');
 
 const String kForPointPrompt = r'''You are a professional Burmese educational and documentary podcast script writer.
 
@@ -1706,27 +1708,30 @@ class _PodcastStudioScreenState extends State<PodcastStudioScreen> {
     );
   }
 
-  // ==================== TAB 1 FUNCTIONS (SYSTEM FILE PICKER + OFFLINE WHISPER) ====================
+  // ==================== TAB 1 FUNCTIONS (NATIVE SYSTEM FILE PICKER + OFFLINE WHISPER) ====================
 
   Future<void> _pickOfflineMedia(String mediaType) async {
     try {
-      final FilePickerResult? result = await FilePicker.platform.pickFiles(
-        type: FileType.custom,
-        allowedExtensions: mediaType == 'MP4 Video'
-            ? ['mp4', 'mkv', 'mov', 'webm']
-            : ['mp3', 'wav', 'm4a', 'aac', 'ogg', 'flac', 'mp4'],
+      final String mimeType =
+          mediaType == 'MP4 Video' ? 'video/*' : 'audio/*';
+      final dynamic result = await _filePickerChannel.invokeMethod(
+        'pickFile',
+        {'mimeType': mimeType},
       );
-      if (result != null && result.files.isNotEmpty) {
-        final picked = result.files.first;
-        setState(() {
-          _selectedMediaPath = picked.path ?? picked.name;
-        });
-        if (!mounted) return;
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text('ရွေးချယ်ပြီးပါပြီ: ${picked.name}'),
-          ),
-        );
+      if (result != null && result is Map) {
+        final String pickedPath =
+            (result['path'] ?? result['name'] ?? '').toString();
+        final String pickedName =
+            (result['name'] ?? pickedPath.split('/').last).toString();
+        if (pickedPath.isNotEmpty) {
+          setState(() {
+            _selectedMediaPath = pickedPath;
+          });
+          if (!mounted) return;
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(content: Text('ရွေးချယ်ပြီးပါပြီ: $pickedName')),
+          );
+        }
       }
     } catch (e) {
       if (!mounted) return;
@@ -1828,26 +1833,25 @@ class _PodcastStudioScreenState extends State<PodcastStudioScreen> {
 
   Future<void> _pickTxtFileForTab2() async {
     try {
-      final FilePickerResult? result = await FilePicker.platform.pickFiles(
-        type: FileType.custom,
-        allowedExtensions: ['txt'],
-        withData: true,
+      final dynamic result = await _filePickerChannel.invokeMethod(
+        'pickFile',
+        {'mimeType': 'text/*'},
       );
-      if (result != null && result.files.isNotEmpty) {
-        final picked = result.files.first;
-        String content = '';
-        if (picked.bytes != null) {
-          content = utf8.decode(picked.bytes!, allowMalformed: true);
-        } else if (picked.path != null) {
-          content = await File(picked.path!).readAsString();
+      if (result != null && result is Map) {
+        final String pickedPath = (result['path'] ?? '').toString();
+        final String pickedName = (result['name'] ?? 'transcript.txt').toString();
+        if (pickedPath.isNotEmpty) {
+          final String content = await File(pickedPath).readAsString();
+          setState(() {
+            _promptController.text = content;
+          });
+          if (!mounted) return;
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(
+              content: Text('$pickedName မှ စာသားများ ထည့်သွင်းပြီးပါပြီ'),
+            ),
+          );
         }
-        setState(() {
-          _promptController.text = content;
-        });
-        if (!mounted) return;
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('${picked.name} မှ စာသားများ ထည့်သွင်းပြီးပါပြီ')),
-        );
       }
     } catch (e) {
       if (!mounted) return;
@@ -2142,7 +2146,6 @@ class _PodcastStudioScreenState extends State<PodcastStudioScreen> {
 
   @override
   Widget build(BuildContext context) {
-    final bottomInset = MediaQuery.of(context).viewPadding.bottom;
     return Scaffold(
       appBar: AppBar(
         title: const Text(
@@ -2190,7 +2193,7 @@ class _PodcastStudioScreenState extends State<PodcastStudioScreen> {
             ),
             Expanded(
               child: ListView(
-                padding: EdgeInsets.fromLTRB(16, 16, 16, 28 + bottomInset),
+                padding: const EdgeInsets.fromLTRB(16, 16, 16, 36),
                 children: [
                   // ==================== TAB 1: OFFLINE AUDIO/MP4 TO TEXT ====================
                   if (_selectedTab == 0) ...[
@@ -2761,15 +2764,10 @@ class _PodcastStudioScreenState extends State<PodcastStudioScreen> {
               ),
             ),
 
-            // Bottom Generate Full Audio Bar (Tab 2) safely above Navigation Keys
+            // Bottom Generate Full Audio Bar safely above Phone Navigation Keys
             if (_selectedTab == 1)
               Container(
-                padding: EdgeInsets.fromLTRB(
-                  16,
-                  10,
-                  16,
-                  bottomInset > 0 ? bottomInset + 12 : 18,
-                ),
+                padding: const EdgeInsets.fromLTRB(16, 10, 16, 16),
                 decoration: const BoxDecoration(
                   color: darkBg,
                   border: Border(
