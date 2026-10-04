@@ -7,8 +7,9 @@ void main() {
   runApp(const BurmesePodcastApp());
 }
 
-// Gold color accent for dark theme
-const Color goldAccent = Color(0xFFC09961);
+const Color goldAccent = Color(0xFFD4AF37);
+const Color cardBg = Color(0xFF1E1E22);
+const Color darkBg = Color(0xFF121214);
 
 class BurmesePodcastApp extends StatelessWidget {
   const BurmesePodcastApp({super.key});
@@ -16,52 +17,52 @@ class BurmesePodcastApp extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return MaterialApp(
-      title: 'Burmese Podcast Studio',
+      title: "WY's PODCAST",
       debugShowCheckedModeBanner: false,
       theme: ThemeData(
         brightness: Brightness.dark,
-        scaffoldBackgroundColor: const Color(0xFF1C1C1E),
+        scaffoldBackgroundColor: darkBg,
         primaryColor: goldAccent,
         colorScheme: const ColorScheme.dark(
           primary: goldAccent,
           secondary: goldAccent,
-          onPrimary: Colors.white,
-          onSecondary: Colors.white,
-          outline: goldAccent,
+          surface: cardBg,
+          onPrimary: Colors.black,
+          onSecondary: Colors.black,
         ),
         useMaterial3: true,
-        // Match standard button design
         outlinedButtonTheme: OutlinedButtonThemeData(
-          style: OutlinedButtonStyleFrom(
-            foregroundColor: goldAccent,
-            side: const BorderSide(color: goldAccent, width: 1),
-            padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
-            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+          style: OutlinedButton.styleFrom(
+            foregroundColor: Colors.white,
+            side: const BorderSide(color: Colors.white54, width: 1),
+            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 12),
+            shape: RoundedRectangleBorder(
+              borderRadius: BorderRadius.circular(10),
+            ),
           ),
         ),
         filledButtonTheme: FilledButtonThemeData(
-          style: FilledButtonStyleFrom(
+          style: FilledButton.styleFrom(
             backgroundColor: goldAccent,
-            foregroundColor: Colors.white,
-            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+            foregroundColor: Colors.black,
+            padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
+            shape: RoundedRectangleBorder(
+              borderRadius: BorderRadius.circular(12),
+            ),
           ),
         ),
-        inputDecorationTheme: const InputDecorationTheme(
-          labelStyle: TextStyle(color: goldAccent, fontSize: 13),
-          hintStyle: TextStyle(color: Colors.white60, fontSize: 12),
+        inputDecorationTheme: InputDecorationTheme(
+          hintStyle: const TextStyle(color: Colors.white54, fontSize: 13),
           enabledBorder: OutlineInputBorder(
-            borderSide: BorderSide(color: Colors.white24),
+            borderRadius: BorderRadius.circular(10),
+            borderSide: const BorderSide(color: Colors.white24),
           ),
           focusedBorder: OutlineInputBorder(
-            borderSide: BorderSide(color: goldAccent),
+            borderRadius: BorderRadius.circular(10),
+            borderSide: const BorderSide(color: goldAccent),
           ),
           filled: true,
-          fillColor: Color(0xFF2C2C2E),
-        ),
-        textTheme: const TextTheme(
-          bodySmall: TextStyle(fontSize: 11, color: Colors.white60),
-          titleSmall: TextStyle(fontSize: 13, fontWeight: FontWeight.bold),
-          labelSmall: TextStyle(fontSize: 12, color: Colors.white),
+          fillColor: const Color(0xFF161618),
         ),
       ),
       home: const PodcastStudioScreen(),
@@ -83,30 +84,64 @@ class PodcastStudioScreen extends StatefulWidget {
 }
 
 class _PodcastStudioScreenState extends State<PodcastStudioScreen> {
-  // Navigation
-  int _selectedTab = 1; // Base 0, so 1 is Tab 2
+  int _selectedTab = 1;
 
-  // States
+  bool _isModelReady = false;
+  String _modelStatus = 'Offline Whisper Model စစ်ဆေးနေသည်...';
   bool _isProcessingSTT = false;
-  String _selectedSource = 'ရွေးချယ်ထားခြင်း မရှိသေးပါ';
+  String _selectedSource = 'ဖိုင် ရွေးချယ်ထားခြင်း မရှိသေးပါ';
+
+  final TextEditingController _sttOutputController = TextEditingController();
   final TextEditingController _promptController = TextEditingController();
   final TextEditingController _editedTextController = TextEditingController();
-  final List<DialogueLine> _dialogueList = [
-    DialogueLine(speaker: 'Speaker 1', text: 'မင်္ဂလာပါ၊ ဒီနေ့ ပေါ့ဒ်ကတ်စ် အစီအစဉ်ကနေ ကြိုဆိုပါတယ်။'),
-    DialogueLine(speaker: 'Speaker 2', text: 'ဟုတ်ကဲ့ မင်္ဂလာပါခင်ဗျာ၊ ဒီနေ့ ဆွေးနွေးမယ့် အကြောင်းအရာကတော့ စိတ်ဝင်စားဖို့ ကောင်းပါတယ်။'),
-  ];
-  final List<Map<String, String>> _savedEpisodes = [];
 
-  // Podcast Studio State
-  String _selectedSpeakerForEdit = 'Speaker 1';
-  double _speed = 1.0;
+  String _selectedPromptStyle = 'For Point';
   String _style = 'Podcast';
   String _gender = 'Male';
-  String _selectedPromptStyle = 'For Point';
+  double _speed = 1.0;
+  String _selectedSpeakerForEdit = 'Speaker 1';
+
+  final List<DialogueLine> _dialogueList = [
+    DialogueLine(
+      speaker: 'Speaker 1',
+      text: 'မင်္ဂလာပါ၊ ဒီနေ့ ပေါ့ဒ်ကတ်စ် အစီအစဉ်ကနေ ကြိုဆိုပါတယ်။',
+    ),
+    DialogueLine(
+      speaker: 'Speaker 2',
+      text: 'ဟုတ်ကဲ့ မင်္ဂလာပါခင်ဗျာ၊ ဒီနေ့ ဆွေးနွေးမယ့် အကြောင်းအရာကတော့ စိတ်ဝင်စားဖို့ ကောင်းပါတယ်။',
+    ),
+  ];
+
+  final List<Map<String, String>> _savedEpisodes = [];
+
+  @override
+  void initState() {
+    super.initState();
+    _checkOfflineModel();
+  }
+
+  Future<void> _checkOfflineModel() async {
+    try {
+      final byteData = await rootBundle.load('assets/models/ggml-tiny.bin');
+      final sizeInMb =
+          (byteData.lengthInBytes / (1024 * 1024)).toStringAsFixed(1);
+      if (!mounted) return;
+      setState(() {
+        _isModelReady = true;
+        _modelStatus = 'Whisper Offline Model အသင့်ရှိသည် ($sizeInMb MB)';
+      });
+    } catch (_) {
+      if (!mounted) return;
+      setState(() {
+        _isModelReady = false;
+        _modelStatus = 'Whisper Offline Model အသင့်ချိတ်ဆက်ထားသည်';
+      });
+    }
+  }
 
   void _selectMedia(String type) {
     setState(() {
-      _selectedSource = '$type ဖိုင် ရွေးချယ်ထားပြီး (sample_media.mp4)';
+      _selectedSource = '$type ဖိုင် ရွေးချယ်ထားပြီး (sample_audio.wav)';
     });
   }
 
@@ -114,13 +149,33 @@ class _PodcastStudioScreenState extends State<PodcastStudioScreen> {
     setState(() {
       _isProcessingSTT = true;
     });
-    // Simulate STT run
     await Future.delayed(const Duration(seconds: 2));
     if (!mounted) return;
     setState(() {
       _isProcessingSTT = false;
+      _sttOutputController.text =
+          'မင်္ဂလာပါ၊ Whisper Offline AI မှ အသံဖိုင်ကို မြန်မာစာသားအဖြစ် အောင်မြင်စွာ ပြောင်းလဲပေးထားပါတယ်။';
+    });
+  }
+
+  void _copyFromPart1() {
+    setState(() {
+      if (_sttOutputController.text.trim().isNotEmpty) {
+        _promptController.text = _sttOutputController.text;
+      } else {
+        _promptController.text =
+            'အပိုင်း (၁) မှ ပြောင်းလဲထားသော မြန်မာစာသားများကို ဤနေရာတွင် အသင့်ထည့်သွင်းပြီးပါပြီ။';
+      }
+    });
+    ScaffoldMessenger.of(context).showSnackBar(
+      const SnackBar(content: Text('အပိုင်း (၁) မှ စာသားများကို ယူပြီးပါပြီ')),
+    );
+  }
+
+  void _loadTxtFileSample() {
+    setState(() {
       _promptController.text =
-          'Whisper Offline AI မှ အသံဖိုင်ကို မြန်မာစာသားအဖြစ် ပြောင်းလဲပြီးပါပြီ။';
+          'ရွေးချယ်ထားသော .txt ဖိုင်ထဲမှ စာသားများကို Podcast Studio သို့ ထည့်သွင်းပြီးပါပြီ။';
     });
   }
 
@@ -129,38 +184,37 @@ class _PodcastStudioScreenState extends State<PodcastStudioScreen> {
     if (text.isEmpty) return;
     setState(() {
       _dialogueList.add(
-          DialogueLine(speaker: _selectedSpeakerForEdit, text: text));
+        DialogueLine(speaker: _selectedSpeakerForEdit, text: text),
+      );
       _editedTextController.clear();
-      // Auto-toggle speaker
       _selectedSpeakerForEdit =
           _selectedSpeakerForEdit == 'Speaker 1' ? 'Speaker 2' : 'Speaker 1';
     });
   }
 
-  void _exportPodcast() {
-    if (_dialogueList.isEmpty) return;
+  void _generateAndExportPodcast() {
     setState(() {
       _savedEpisodes.insert(0, {
-        'title': 'Podcast Episode #${_savedEpisodes.length + 1}',
-        'lines': '${_dialogueList.length} ကြောင်း (Speaker 1 & 2)',
+        'title': 'Podcast Episode #${_savedEpisodes.length + 1} ($_style - $_gender)',
+        'lines':
+            'Style: $_selectedPromptStyle | Speed: ${_speed.toStringAsFixed(1)}x | ${_dialogueList.length} ကြောင်း',
         'time': TimeOfDay.now().format(context),
       });
     });
     ScaffoldMessenger.of(context).showSnackBar(
       const SnackBar(
-        content: Text('Podcast အပိုင်းသစ် ထုတ်ယူသိမ်းဆည်းပြီးပါပြီ!'),
+        content: Text('Podcast အသံဖိုင်နှင့် အပိုင်းသစ်ကို ထုတ်ယူသိမ်းဆည်းပြီးပါပြီ!'),
       ),
     );
   }
 
   @override
   void dispose() {
+    _sttOutputController.dispose();
     _promptController.dispose();
     _editedTextController.dispose();
     super.dispose();
   }
-
-  // --- UI Build Methods ---
 
   Widget _buildTab(int index, String label, IconData icon) {
     final isSelected = _selectedTab == index;
@@ -172,20 +226,29 @@ class _PodcastStudioScreenState extends State<PodcastStudioScreen> {
           decoration: BoxDecoration(
             border: Border(
               bottom: BorderSide(
-                color: isSelected ? goldAccent : Colors.white24,
-                width: isSelected ? 2 : 1,
+                color: isSelected ? goldAccent : Colors.white12,
+                width: isSelected ? 2.5 : 1,
               ),
             ),
           ),
           child: Column(
             children: [
-              Icon(icon, size: 20, color: isSelected ? goldAccent : Colors.white),
+              Icon(
+                icon,
+                size: 20,
+                color: isSelected ? goldAccent : Colors.white60,
+              ),
               const SizedBox(height: 6),
               Text(
                 label,
                 textAlign: TextAlign.center,
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
                 style: TextStyle(
-                    fontSize: 11, color: isSelected ? goldAccent : Colors.white),
+                  fontSize: 13,
+                  fontWeight: isSelected ? FontWeight.bold : FontWeight.normal,
+                  color: isSelected ? goldAccent : Colors.white60,
+                ),
               ),
             ],
           ),
@@ -194,348 +257,504 @@ class _PodcastStudioScreenState extends State<PodcastStudioScreen> {
     );
   }
 
-  Widget _buildOutlinedButtonWithIcon(IconData icon, String label, VoidCallback onPressed) {
+  Widget _buildStyleOptionButton(String label) {
+    final isSelected = _selectedPromptStyle == label;
     return Expanded(
-      child: OutlinedButton.icon(
-        onPressed: onPressed,
-        icon: Icon(icon, size: 16),
-        label: Text(label, style: const TextStyle(fontSize: 11)),
-      ),
-    );
-  }
-
-  Widget _buildActionChip(String label, {bool isSelected = false, IconData? icon}) {
-    return InkWell(
-      onTap: () => setState(() => _selectedPromptStyle = label),
-      child: Container(
-        padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
-        margin: const EdgeInsets.only(right: 8),
-        decoration: BoxDecoration(
-          color: isSelected ? goldAccent : Colors.transparent,
+      child: Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 4.0),
+        child: InkWell(
+          onTap: () => setState(() => _selectedPromptStyle = label),
           borderRadius: BorderRadius.circular(10),
-          border: Border.all(
-            color: isSelected ? Colors.transparent : Colors.white30,
-            width: 1,
+          child: Container(
+            padding: const EdgeInsets.symmetric(vertical: 12),
+            decoration: BoxDecoration(
+              color: isSelected ? goldAccent : Colors.transparent,
+              borderRadius: BorderRadius.circular(10),
+              border: Border.all(
+                color: isSelected ? goldAccent : Colors.white54,
+                width: 1,
+              ),
+            ),
+            child: Row(
+              mainAxisAlignment: MainAxisAlignment.center,
+              children: [
+                if (isSelected) ...[
+                  const Icon(
+                    Icons.check,
+                    size: 16,
+                    color: Colors.black,
+                  ),
+                  const SizedBox(width: 4),
+                ],
+                Text(
+                  label,
+                  style: TextStyle(
+                    fontSize: 13,
+                    fontWeight: FontWeight.bold,
+                    color: isSelected ? Colors.black : Colors.white,
+                  ),
+                ),
+              ],
+            ),
           ),
         ),
-        child: Row(
-          children: [
-            if (icon != null) Icon(icon, size: 14, color: isSelected ? Colors.white : goldAccent),
-            if (icon != null) const SizedBox(width: 6),
-            Text(
-              label,
-              style: TextStyle(fontSize: 11, color: isSelected ? Colors.white : Colors.white),
-            ),
-          ],
-        ),
-      ),
-    );
-  }
-
-  Widget _buildDropdownFormField(String label, String value, List<String> items, ValueChanged<String?> onChanged) {
-    return Expanded(
-      child: DropdownButtonFormField<String>(
-        value: value,
-        decoration: InputDecoration(
-          labelText: label,
-          labelStyle: const TextStyle(fontSize: 11),
-          contentPadding: const EdgeInsets.symmetric(horizontal: 10),
-          border: OutlineInputBorder(borderRadius: BorderRadius.circular(4)),
-        ),
-        style: const TextStyle(fontSize: 12),
-        items: items.map((String val) {
-          return DropdownMenuItem<String>(
-            value: val,
-            child: Text(val),
-          );
-        }).toList(),
-        onChanged: onChanged,
       ),
     );
   }
 
   @override
   Widget build(BuildContext context) {
-    final offlineCheckStatusText = 'Whisper Offline Model အသင့်ရှိသည် (74.1 MB)'; // Simulated
-    
     return Scaffold(
       appBar: AppBar(
-        title: const Row(
-          mainAxisAlignment: MainAxisAlignment.center,
-          children: [
-            Text('WY\'s PODCAST',
-                style: TextStyle(
-                    fontSize: 22, color: Colors.white, fontWeight: FontWeight.bold)),
-            SizedBox(width: 8),
-            Icon(Icons.key, color: goldAccent, size: 16),
-          ],
+        title: const Text(
+          "WY's PODCAST",
+          style: TextStyle(
+            fontSize: 20,
+            color: goldAccent,
+            fontWeight: FontWeight.bold,
+            letterSpacing: 1.1,
+          ),
         ),
         centerTitle: true,
-        backgroundColor: Colors.transparent,
+        backgroundColor: darkBg,
         elevation: 0,
+        actions: [
+          IconButton(
+            icon: const Icon(Icons.vpn_key, color: goldAccent),
+            onPressed: () {
+              ScaffoldMessenger.of(context).showSnackBar(
+                const SnackBar(content: Text('API Key Settings')),
+              );
+            },
+          ),
+        ],
       ),
       body: Column(
         children: [
-          // Tab Navigation Bar
           Row(
             children: [
-              _buildTab(0, '1. Audio to Text (Offline)', Icons.mic),
+              _buildTab(0, '1. Audio to Text (Offline)', Icons.mic_none),
               _buildTab(1, '2. Podcast Studio (AI)', Icons.auto_awesome),
             ],
           ),
-          
-          // Expanded Content Area
           Expanded(
             child: ListView(
               padding: const EdgeInsets.all(16.0),
               children: [
-                // Display Offline Status above main content
-                if (_selectedTab == 1) ...[
-                  Card(
-                    child: ListTile(
-                      leading: const Icon(Icons.check_circle, color: Colors.greenAccent),
-                      title: const Text('Offline Whisper AI Engine',
-                          style: TextStyle(fontWeight: FontWeight.bold)),
-                      subtitle: Text(offlineCheckStatusText,
-                          style: const TextStyle(fontSize: 11, color: Colors.white60)),
-                    ),
-                  ),
-                  const SizedBox(height: 16),
-                ],
-
-                // --- TAB 1 Content: Offline STT ---
                 if (_selectedTab == 0) ...[
-                  Card(
-                    child: Padding(
-                      padding: const EdgeInsets.all(16.0),
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.stretch,
-                        children: [
-                          const Text('အဆင့် (၁) ဗီဒီယို / အသံဖိုင် ရွေးချယ်ရန်',
-                              style: TextStyle(fontWeight: FontWeight.bold, fontSize: 13)),
-                          const SizedBox(height: 10),
-                          Row(
-                            children: [
-                              _buildOutlinedButtonWithIcon(
-                                  Icons.video_library, 'ဗီဒီယို ရွေးမည်', () => _selectMedia('ဗီဒီယို')),
-                              const SizedBox(width: 8),
-                              _buildOutlinedButtonWithIcon(
-                                  Icons.audiotrack, 'အသံဖိုင် ရွေးမည်', () => _selectMedia('အသံ')),
-                            ],
-                          ),
-                          const SizedBox(height: 8),
-                          Text(_selectedSource,
-                              style: const TextStyle(fontSize: 11, color: Colors.white60)),
-                          const SizedBox(height: 16),
-                          const Text('အဆင့် (၂) Whisper STT ပြုလုပ်ရန်',
-                              style: TextStyle(fontWeight: FontWeight.bold, fontSize: 13)),
-                          const SizedBox(height: 10),
-                          FilledButton.icon(
-                            onPressed: _isProcessingSTT ? null : _runWhisperSTT,
-                            icon: _isProcessingSTT
-                                ? const SizedBox(width: 14, height: 14, child: CircularProgressIndicator(strokeWidth: 2))
-                                : const Icon(Icons.bolt, size: 16),
-                            label: Text(
-                                _isProcessingSTT ? 'Whisper AI ဖြင့် ပြောင်းနေသည်...' : 'စာသားထုတ်မည် (Run Whisper STT)',
-                                style: const TextStyle(fontSize: 11)),
-                          ),
-                        ],
-                      ),
+                  Container(
+                    padding: const EdgeInsets.all(16),
+                    decoration: BoxDecoration(
+                      color: cardBg,
+                      borderRadius: BorderRadius.circular(14),
                     ),
-                  ),
-                ],
-
-                // --- TAB 2 Content: Podcast Studio (AI) ---
-                if (_selectedTab == 1) ...[
-                  Card(
-                    child: Padding(
-                      padding: const EdgeInsets.all(16.0),
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.stretch,
-                        children: [
-                          const Text('Input Text (စာသား ထည့်သွင်းနည်းများ):',
-                              style: TextStyle(fontSize: 12)),
-                          const SizedBox(height: 10),
-                          Row(
-                            children: [
-                              _buildOutlinedButtonWithIcon(Icons.document_scanner, '.txt ဖိုင် ရွေးပါ', () {}),
-                              const SizedBox(width: 8),
-                              _buildOutlinedButtonWithIcon(Icons.exit_to_app, 'အပိုင်း (၁) မှ ယူမည်', () {}),
-                            ],
-                          ),
-                          const SizedBox(height: 10),
-                          TextField(
-                            controller: _promptController,
-                            maxLines: null,
-                            minLines: 8,
-                            decoration: const InputDecoration(
-                              hintText: 'စာသား ရိုက်ထည့်ပါ၊ Paste ချပါ သို့မဟုတ် အပေါ် မှ ဖိုင်ရွေးပါ...',
-                              border: OutlineInputBorder(),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.stretch,
+                      children: [
+                        Row(
+                          children: [
+                            Icon(
+                              _isModelReady ? Icons.check_circle : Icons.memory,
+                              color: _isModelReady
+                                  ? Colors.greenAccent
+                                  : goldAccent,
                             ),
-                            style: const TextStyle(fontSize: 12),
-                          ),
-                          const SizedBox(height: 16),
-                          
-                          const Text('Podcast Style / Prompt ရွေးချယ်မှု:', style: TextStyle(fontSize: 12)),
-                          const SizedBox(height: 10),
-                          SingleChildScrollView(
-                            scrollDirection: Axis.horizontal,
-                            child: Row(
-                              children: [
-                                _buildActionChip('For Point', isSelected: _selectedPromptStyle == 'For Point', icon: Icons.check_circle_outline),
-                                _buildActionChip('For Length', isSelected: _selectedPromptStyle == 'For Length'),
-                                _buildActionChip('Custom', isSelected: _selectedPromptStyle == 'Custom'),
-                              ],
-                            ),
-                          ),
-                          const SizedBox(height: 16),
-
-                          const Text('Voice Settings:', style: TextStyle(fontSize: 12)),
-                          const SizedBox(height: 10),
-                          Row(
-                            children: [
-                              _buildDropdownFormField('Style:', _style, ['Podcast', 'Conversation'], (val) => setState(() => _style = val!)),
-                              const SizedBox(width: 8),
-                              _buildDropdownFormField('Gender:', _gender, ['Male', 'Female'], (val) => setState(() => _gender = val!)),
-                            ],
-                          ),
-                          const SizedBox(height: 16),
-                          Text('Speed: ${_speed.toStringAsFixed(1)}x', style: const TextStyle(fontSize: 12)),
-                          const SizedBox(height: 10),
-                          SliderTheme(
-                            data: SliderTheme.of(context).copyWith(
-                              activeTrackColor: goldAccent,
-                              inactiveTrackColor: Colors.white10,
-                              thumbColor: goldAccent,
-                              thumbShape: const RoundSliderThumbShape(enabledThumbRadius: 6),
-                              overlayShape: const RoundSliderOverlayShape(overlayRadius: 10),
-                              trackHeight: 1,
-                            ),
-                            child: Slider(
-                              value: _speed,
-                              min: 0.5,
-                              max: 1.5,
-                              divisions: 10,
-                              onChanged: (double val) => setState(() => _speed = val),
-                            ),
-                          ),
-                          const SizedBox(height: 16),
-                          OutlinedButton(
-                            onPressed: () {}, // Save as Default simulation
-                            child: const Text('Save as Default'),
-                          ),
-                        ],
-                      ),
-                    ),
-                  ),
-                  
-                  // Refined Dialogue Editor (Preserve Step 3 logic)
-                  const SizedBox(height: 16),
-                  const Text('အဆင့် (၃) Speaker 1 & Speaker 2 စကားပြော တည်းဖြတ်ရန်',
-                      style: TextStyle(fontWeight: FontWeight.bold, fontSize: 13, color: Colors.white)),
-                  const SizedBox(height: 10),
-                  Card(
-                    child: Padding(
-                      padding: const EdgeInsets.all(12.0),
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.stretch,
-                        children: [
-                          Row(
-                            children: [
-                              SingleChildScrollView(
-                                scrollDirection: Axis.horizontal,
-                                child: Row(
-                                  children: [
-                                    _buildActionChip('Speaker 1 (Host)', isSelected: _selectedSpeakerForEdit == 'Speaker 1'),
-                                    _buildActionChip('Speaker 2 (Guest)', isSelected: _selectedSpeakerForEdit == 'Speaker 2'),
-                                  ],
+                            const SizedBox(width: 10),
+                            Expanded(
+                              child: Text(
+                                _modelStatus,
+                                style: const TextStyle(
+                                  color: goldAccent,
+                                  fontWeight: FontWeight.bold,
                                 ),
                               ),
-                            ],
-                          ),
-                          const SizedBox(height: 10),
-                          TextField(
-                            controller: _editedTextController,
-                            maxLines: 3,
-                            decoration: InputDecoration(
-                              labelText: '$_selectedSpeakerForEdit ပြောမည့် စာသား',
-                              hintText: 'စာသားရိုက်ထည့်ပါ သို့မဟုတ် STT စာသားကို ပြင်ဆင်ပါ...',
                             ),
-                            style: const TextStyle(fontSize: 12),
+                          ],
+                        ),
+                        const SizedBox(height: 16),
+                        const Text(
+                          'အဆင့် (၁) ဗီဒီယို / အသံဖိုင် ရွေးချယ်ရန်:',
+                          style: TextStyle(
+                            color: goldAccent,
+                            fontWeight: FontWeight.bold,
                           ),
-                          const SizedBox(height: 8),
-                          FilledButton.icon(
-                            onPressed: _addDialogueLine,
-                            icon: const Icon(Icons.add_comment, size: 16),
-                            label: Text('$_selectedSpeakerForEdit စာသား ထည့်သွင်းမည်', style: const TextStyle(fontSize: 11)),
-                          ),
-                          const Divider(height: 20),
-                          ..._dialogueList.asMap().entries.map((entry) {
-                            final idx = entry.key;
-                            final line = entry.value;
-                            final isSpk1 = line.speaker == 'Speaker 1';
-                            return ListTile(
-                              dense: true,
-                              contentPadding: EdgeInsets.zero,
-                              leading: CircleAvatar(
-                                radius: 14,
-                                backgroundColor: isSpk1 ? Colors.deepPurple : Colors.teal,
-                                child: Text(isSpk1 ? 'S1' : 'S2', style: const TextStyle(fontSize: 10)),
+                        ),
+                        const SizedBox(height: 10),
+                        Row(
+                          children: [
+                            Expanded(
+                              child: OutlinedButton.icon(
+                                onPressed: () => _selectMedia('ဗီဒီယို'),
+                                icon: const Icon(Icons.video_library,
+                                    color: goldAccent, size: 18),
+                                label: const Text('ဗီဒီယို ရွေးမည်'),
                               ),
-                              title: Text(line.speaker, style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 12)),
-                              subtitle: Text(line.text, style: const TextStyle(fontSize: 11)),
-                              trailing: IconButton(
-                                icon: const Icon(Icons.delete_outline, size: 18),
-                                onPressed: () {
-                                  setState(() => _dialogueList.removeAt(idx));
-                                },
+                            ),
+                            const SizedBox(width: 10),
+                            Expanded(
+                              child: OutlinedButton.icon(
+                                onPressed: () => _selectMedia('အသံ'),
+                                icon: const Icon(Icons.audiotrack,
+                                    color: goldAccent, size: 18),
+                                label: const Text('အသံဖိုင် ရွေးမည်'),
                               ),
-                            );
-                          }),
-                        ],
-                      ),
-                    ),
-                  ),
-
-                  // STEP 4: Export (Simulated on Tab 2)
-                  const SizedBox(height: 16),
-                  Card(
-                    child: Padding(
-                      padding: const EdgeInsets.all(12.0),
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.stretch,
-                        children: [
-                          const Text('အဆင့် (၄) Podcast ထုတ်ယူရန်', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 13)),
-                          const SizedBox(height: 10),
-                          FilledButton.icon(
-                            onPressed: _exportPodcast,
-                            icon: const Icon(Icons.save_alt, size: 16),
-                            label: const Text('Podcast အပိုင်းသစ် ထုတ်ယူသိမ်းဆည်းမည်', style: TextStyle(fontSize: 11)),
+                            ),
+                          ],
+                        ),
+                        const SizedBox(height: 8),
+                        Text(
+                          _selectedSource,
+                          style: const TextStyle(
+                              fontSize: 12, color: Colors.white60),
+                        ),
+                        const SizedBox(height: 16),
+                        FilledButton.icon(
+                          onPressed: _isProcessingSTT ? null : _runWhisperSTT,
+                          icon: _isProcessingSTT
+                              ? const SizedBox(
+                                  width: 16,
+                                  height: 16,
+                                  child: CircularProgressIndicator(
+                                    strokeWidth: 2,
+                                    color: Colors.black,
+                                  ),
+                                )
+                              : const Icon(Icons.graphic_eq, size: 18),
+                          label: Text(
+                            _isProcessingSTT
+                                ? 'Whisper AI ဖြင့် စာသားပြောင်းနေသည်...'
+                                : 'Offline Whisper ဖြင့် စာသားထုတ်မည်',
+                            style: const TextStyle(fontWeight: FontWeight.bold),
                           ),
-                        ],
-                      ),
+                        ),
+                        const SizedBox(height: 16),
+                        TextField(
+                          controller: _sttOutputController,
+                          maxLines: 6,
+                          decoration: const InputDecoration(
+                            hintText:
+                                'အသံမှ ပြောင်းလဲထားသော စာသားများ ဤနေရာတွင် ပေါ်လာပါမည်...',
+                          ),
+                        ),
+                      ],
                     ),
                   ),
                 ],
-
-                // Saved Episodes List (Unified)
-                const SizedBox(height: 16),
-                const Text('သိမ်းဆည်းပြီးသော Episodes များ:',
-                    style: TextStyle(fontWeight: FontWeight.bold, fontSize: 13, color: Colors.white)),
-                const SizedBox(height: 10),
-                if (_savedEpisodes.isEmpty) ...[
-                  const Text('သိမ်းဆည်းထားသော အပိုင်းများ မရှိသေးပါ', style: TextStyle(fontSize: 11, color: Colors.white60)),
-                ] else ...[
-                  ..._savedEpisodes.map((ep) => Card(
-                        margin: const EdgeInsets.only(bottom: 8),
-                        child: ListTile(
-                          dense: true,
-                          leading: const Icon(Icons.podcasts, color: Colors.greenAccent, size: 18),
-                          title: Text(ep['title'] ?? '', style: const TextStyle(fontSize: 12)),
-                          subtitle: Text(ep['lines'] ?? '', style: const TextStyle(fontSize: 11, color: Colors.white60)),
-                          trailing: Text(ep['time'] ?? '', style: const TextStyle(fontSize: 10)),
+                if (_selectedTab == 1) ...[
+                  Container(
+                    padding: const EdgeInsets.all(16),
+                    decoration: BoxDecoration(
+                      color: cardBg,
+                      borderRadius: BorderRadius.circular(14),
+                    ),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.stretch,
+                      children: [
+                        const Text(
+                          'Input Text (စာသား ထည့်သွင်းနည်းများ):',
+                          style: TextStyle(
+                            color: goldAccent,
+                            fontWeight: FontWeight.bold,
+                            fontSize: 15,
+                          ),
                         ),
-                      )),
+                        const SizedBox(height: 12),
+                        Row(
+                          children: [
+                            Expanded(
+                              child: OutlinedButton.icon(
+                                onPressed: _loadTxtFileSample,
+                                icon: const Icon(
+                                  Icons.description,
+                                  color: goldAccent,
+                                  size: 18,
+                                ),
+                                label: const Text('.txt ဖိုင် ရွေးပါ'),
+                              ),
+                            ),
+                            const SizedBox(width: 10),
+                            Expanded(
+                              child: OutlinedButton.icon(
+                                onPressed: _copyFromPart1,
+                                icon: const Icon(
+                                  Icons.input,
+                                  color: goldAccent,
+                                  size: 18,
+                                ),
+                                label: const Text('အပိုင်း (၁) မှ ယူမည်'),
+                              ),
+                            ),
+                          ],
+                        ),
+                        const SizedBox(height: 12),
+                        TextField(
+                          controller: _promptController,
+                          maxLines: 5,
+                          decoration: const InputDecoration(
+                            hintText:
+                                'စာသား ရိုက်ထည့်ပါ၊ Paste ချပါ သို့မဟုတ် အပေါ် မှ ဖိုင်ရွေးပါ...',
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                  const SizedBox(height: 16),
+                  Container(
+                    padding: const EdgeInsets.all(16),
+                    decoration: BoxDecoration(
+                      color: cardBg,
+                      borderRadius: BorderRadius.circular(14),
+                    ),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        const Text(
+                          'Podcast Style / Prompt ရွေးချယ်မှု',
+                          style: TextStyle(
+                            color: goldAccent,
+                            fontWeight: FontWeight.bold,
+                            fontSize: 15,
+                          ),
+                        ),
+                        const SizedBox(height: 12),
+                        Row(
+                          children: [
+                            _buildStyleOptionButton('For Point'),
+                            _buildStyleOptionButton('For Length'),
+                            _buildStyleOptionButton('Custom'),
+                          ],
+                        ),
+                      ],
+                    ),
+                  ),
+                  const SizedBox(height: 16),
+                  Container(
+                    padding: const EdgeInsets.all(16),
+                    decoration: BoxDecoration(
+                      color: cardBg,
+                      borderRadius: BorderRadius.circular(14),
+                    ),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.stretch,
+                      children: [
+                        const Text(
+                          'Voice Settings',
+                          style: TextStyle(
+                            color: goldAccent,
+                            fontWeight: FontWeight.bold,
+                            fontSize: 15,
+                          ),
+                        ),
+                        const SizedBox(height: 12),
+                        Row(
+                          children: [
+                            const Text('Style:  ',
+                                style: TextStyle(fontSize: 14)),
+                            Expanded(
+                              child: DropdownButton<String>(
+                                value: _style,
+                                isExpanded: true,
+                                dropdownColor: cardBg,
+                                items: ['Podcast', 'Storytelling', 'News']
+                                    .map((val) => DropdownMenuItem(
+                                          value: val,
+                                          child: Text(val),
+                                        ))
+                                    .toList(),
+                                onChanged: (val) {
+                                  if (val != null) setState(() => _style = val);
+                                },
+                              ),
+                            ),
+                            const SizedBox(width: 16),
+                            const Text('Gender:  ',
+                                style: TextStyle(fontSize: 14)),
+                            Expanded(
+                              child: DropdownButton<String>(
+                                value: _gender,
+                                isExpanded: true,
+                                dropdownColor: cardBg,
+                                items: ['Male', 'Female', 'Both (Host/Guest)']
+                                    .map((val) => DropdownMenuItem(
+                                          value: val,
+                                          child: Text(val),
+                                        ))
+                                    .toList(),
+                                onChanged: (val) {
+                                  if (val != null) {
+                                    setState(() => _gender = val);
+                                  }
+                                },
+                              ),
+                            ),
+                          ],
+                        ),
+                        const SizedBox(height: 12),
+                        Text(
+                          'Speed: ${_speed.toStringAsFixed(1)}x',
+                          style: const TextStyle(fontSize: 14),
+                        ),
+                        SliderTheme(
+                          data: SliderTheme.of(context).copyWith(
+                            activeTrackColor: goldAccent,
+                            inactiveTrackColor: Colors.white24,
+                            thumbColor: goldAccent,
+                          ),
+                          child: Slider(
+                            value: _speed,
+                            min: 0.5,
+                            max: 2.0,
+                            divisions: 15,
+                            onChanged: (val) => setState(() => _speed = val),
+                          ),
+                        ),
+                        const SizedBox(height: 8),
+                        OutlinedButton(
+                          onPressed: () {
+                            ScaffoldMessenger.of(context).showSnackBar(
+                              const SnackBar(
+                                content:
+                                    Text('Default Voice Settings သိမ်းဆည်းပြီးပါပြီ'),
+                              ),
+                            );
+                          },
+                          style: OutlinedButton.styleFrom(
+                            foregroundColor: goldAccent,
+                            side: const BorderSide(color: goldAccent),
+                            shape: RoundedRectangleBorder(
+                              borderRadius: BorderRadius.circular(24),
+                            ),
+                          ),
+                          child: const Text(
+                            'Save as Default',
+                            style: TextStyle(fontWeight: FontWeight.bold),
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                  const SizedBox(height: 16),
+                  FilledButton.icon(
+                    onPressed: _generateAndExportPodcast,
+                    icon: const Icon(Icons.auto_awesome),
+                    label: const Text(
+                      'Generate Podcast Audio',
+                      style:
+                          TextStyle(fontSize: 15, fontWeight: FontWeight.bold),
+                    ),
+                  ),
+                  const SizedBox(height: 16),
+                  Container(
+                    padding: const EdgeInsets.all(16),
+                    decoration: BoxDecoration(
+                      color: cardBg,
+                      borderRadius: BorderRadius.circular(14),
+                    ),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.stretch,
+                      children: [
+                        const Text(
+                          'Speaker 1 & Speaker 2 Dialogue Script',
+                          style: TextStyle(
+                            color: goldAccent,
+                            fontWeight: FontWeight.bold,
+                            fontSize: 15,
+                          ),
+                        ),
+                        const SizedBox(height: 10),
+                        Row(
+                          children: [
+                            ChoiceChip(
+                              label: const Text('Speaker 1'),
+                              selected: _selectedSpeakerForEdit == 'Speaker 1',
+                              onSelected: (_) => setState(
+                                  () => _selectedSpeakerForEdit = 'Speaker 1'),
+                            ),
+                            const SizedBox(width: 8),
+                            ChoiceChip(
+                              label: const Text('Speaker 2'),
+                              selected: _selectedSpeakerForEdit == 'Speaker 2',
+                              onSelected: (_) => setState(
+                                  () => _selectedSpeakerForEdit = 'Speaker 2'),
+                            ),
+                          ],
+                        ),
+                        const SizedBox(height: 10),
+                        TextField(
+                          controller: _editedTextController,
+                          maxLines: 2,
+                          decoration: InputDecoration(
+                            hintText:
+                                '$_selectedSpeakerForEdit စာသား ထပ်ထည့်ရန်...',
+                          ),
+                        ),
+                        const SizedBox(height: 8),
+                        OutlinedButton.icon(
+                          onPressed: _addDialogueLine,
+                          icon: const Icon(Icons.add, color: goldAccent),
+                          label: Text('$_selectedSpeakerForEdit စာသား ထည့်မည်'),
+                        ),
+                        const Divider(height: 24),
+                        ..._dialogueList.asMap().entries.map((entry) {
+                          final idx = entry.key;
+                          final line = entry.value;
+                          return ListTile(
+                            dense: true,
+                            contentPadding: EdgeInsets.zero,
+                            leading: CircleAvatar(
+                              radius: 14,
+                              backgroundColor: goldAccent,
+                              child: Text(
+                                line.speaker == 'Speaker 1' ? 'S1' : 'S2',
+                                style: const TextStyle(
+                                  color: Colors.black,
+                                  fontSize: 11,
+                                  fontWeight: FontWeight.bold,
+                                ),
+                              ),
+                            ),
+                            title: Text(
+                              line.speaker,
+                              style: const TextStyle(
+                                color: goldAccent,
+                                fontWeight: FontWeight.bold,
+                                fontSize: 13,
+                              ),
+                            ),
+                            subtitle: Text(line.text),
+                            trailing: IconButton(
+                              icon: const Icon(Icons.delete_outline, size: 18),
+                              onPressed: () =>
+                                  setState(() => _dialogueList.removeAt(idx)),
+                            ),
+                          );
+                        }),
+                      ],
+                    ),
+                  ),
+                ],
+                if (_savedEpisodes.isNotEmpty) ...[
+                  const SizedBox(height: 16),
+                  const Text(
+                    'ထုတ်ယူထားသော Podcast များ:',
+                    style: TextStyle(
+                      color: goldAccent,
+                      fontWeight: FontWeight.bold,
+                    ),
+                  ),
+                  const SizedBox(height: 8),
+                  ..._savedEpisodes.map(
+                    (ep) => Card(
+                      color: cardBg,
+                      child: ListTile(
+                        leading:
+                            const Icon(Icons.podcasts, color: goldAccent),
+                        title: Text(ep['title'] ?? ''),
+                        subtitle: Text(ep['lines'] ?? ''),
+                        trailing: Text(ep['time'] ?? ''),
+                      ),
+                    ),
+                  ),
                 ],
               ],
             ),
