@@ -25,18 +25,15 @@ jobs:
           channel: 'stable'
           cache: true
 
+      - name: Accept Android Licenses
+        run: |
+          yes | flutter doctor --android-licenses || true
+
       - name: Recreate Android Project Folder
         run: |
           flutter create . --platforms=android --org com.waiyan.burmesepodcast
 
-      - name: Accept All Licenses & Setup Environment
-        run: |
-          yes | flutter doctor --android-licenses || true
-          mkdir -p "$ANDROID_HOME/licenses"
-          echo -e "24333f8a63b6825ea9c5514f83c2829b004d1fee\nd56f5187479791eab51dcfd5987e8701e6b0e826" > "$ANDROID_HOME/licenses/android-sdk-license"
-          echo -e "84831b9409646a33ee13ef6102140781e0479965" > "$ANDROID_HOME/licenses/android-sdk-preview-license"
-
-      - name: Configure Gradle minSdk & App Properties
+      - name: Configure Android SDK versions
         run: |
           sed -i 's/minSdk = flutter.minSdkVersion/minSdk = 24/g' android/app/build.gradle || true
           sed -i 's/minSdkVersion flutter.minSdkVersion/minSdkVersion 24/g' android/app/build.gradle || true
@@ -51,13 +48,12 @@ jobs:
       - name: Install Dependencies
         run: flutter pub get
 
-      - name: Build Debug APK with Stacktrace
+      - name: Build APK with Error Capture
         run: |
-          flutter build apk --debug --verbose
+          flutter build apk --debug 2>&1 | tee build_output.log || (echo "=== REAL BUILD ERROR ===" && grep -i -C 3 -E "error:|failed|exception" build_output.log | tail -n 40 && exit 1)
 
       - name: Upload APK Artifact
-        if: always()
         uses: actions/upload-artifact@v4
         with:
           name: burmese-podcast-app
-          path: build/app/outputs/flutter-apk/*.apk
+          path: build/app/outputs/flutter-apk/app-debug.apk
