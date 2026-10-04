@@ -1,4 +1,4 @@
-name: Build APK
+name: Build Android APK
 
 on:
   push:
@@ -8,50 +8,36 @@ on:
 jobs:
   build:
     runs-on: ubuntu-latest
+
     steps:
-      - name: Checkout repository
+      - name: Checkout Repository
         uses: actions/checkout@v4
 
-      - name: Setup Java
+      - name: Set up Java
         uses: actions/setup-java@v4
         with:
-          distribution: 'temurin'
+          distribution: 'zulu'
           java-version: '17'
 
-      - name: Setup Flutter
+      - name: Set up Flutter
         uses: subosito/flutter-action@v2
         with:
           channel: 'stable'
+          cache: true
 
-      - name: Initialize Android project files
+      - name: Download Whisper Offline Model
         run: |
-          flutter create --project-name burmese_podcast_app --org com.waiyan --platforms=android .
-          find android -name "AndroidManifest.xml" -exec sed -i '/<application/i \    <uses-permission android:name="android.permission.INTERNET"/>\n    <uses-permission android:name="android.permission.READ_EXTERNAL_STORAGE"/>' {} +
+          mkdir -p assets/models
+          curl -L -o assets/models/ggml-tiny.bin https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-tiny.bin
 
-      - name: Force Android SDK 36 Globally via Gradle Init Script
-        run: |
-          mkdir -p ~/.gradle
-          cat << 'EOF' > ~/.gradle/init.gradle
-          allprojects {
-              afterEvaluate { project ->
-                  if (project.hasProperty('android')) {
-                      project.android {
-                          compileSdkVersion 36
-                      }
-                  }
-              }
-          }
-          EOF
-          echo "Created ~/.gradle/init.gradle to enforce compileSdkVersion 36 everywhere"
-
-      - name: Install dependencies
+      - name: Install Dependencies
         run: flutter pub get
 
-      - name: Build Android Release APK
-        run: flutter build apk --release --no-tree-shake-icons
+      - name: Build APK
+        run: flutter build apk --release
 
-      - name: Upload APK
+      - name: Upload APK Artifact
         uses: actions/upload-artifact@v4
         with:
-          name: BurmesePodcastApp-Release
+          name: burmese-podcast-app
           path: build/app/outputs/flutter-apk/app-release.apk
