@@ -33,13 +33,14 @@ jobs:
         run: |
           flutter create . --platforms=android --org com.waiyan.burmesepodcast
 
-      - name: Configure Android Versions & NDK Dir
+      - name: Configure Android SDK & NDK
         run: |
-          # SDK versions
           sed -i 's/minSdk = flutter.minSdkVersion/minSdk = 24/g' android/app/build.gradle || true
           sed -i 's/minSdkVersion flutter.minSdkVersion/minSdkVersion 24/g' android/app/build.gradle || true
           sed -i 's/compileSdk = flutter.compileSdkVersion/compileSdk = 34/g' android/app/build.gradle || true
           sed -i 's/targetSdk = flutter.targetSdkVersion/targetSdk = 34/g' android/app/build.gradle || true
+          # NDK version တိုက်ရိုက်သတ်မှတ်ပေးခြင်း
+          sed -i '/android {/a \    ndkVersion = "25.1.8937393"' android/app/build.gradle || true
 
       - name: Download Whisper Offline Model
         run: |
@@ -49,9 +50,15 @@ jobs:
       - name: Install Dependencies
         run: flutter pub get
 
-      - name: Build Debug APK with Direct Gradle Error Log
+      - name: Build Debug APK
         run: |
-          flutter build apk --debug || (cd android && ./gradlew assembleDebug --stacktrace --info)
+          flutter build apk --debug 2>&1 | tee build_log.txt || {
+            echo "=========================================="
+            echo "           EXACT ERROR SUMMARY            "
+            echo "=========================================="
+            grep -A 15 "\* What went wrong:" build_log.txt || tail -n 35 build_log.txt
+            exit 1
+          }
 
       - name: Upload APK Artifact
         uses: actions/upload-artifact@v4
