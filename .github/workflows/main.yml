@@ -5,6 +5,9 @@ on:
     branches: [ main ]
   workflow_dispatch:
 
+permissions:
+  contents: write
+
 jobs:
   build:
     runs-on: ubuntu-latest
@@ -118,7 +121,6 @@ jobs:
                   first_line = 'package com.waiyan.burmesepodcast.burmese_podcast'
               with open(mf, 'w') as f:
                   f.write(first_line + "\n\n" + kt_body)
-              print("Updated MainActivity:", mf)
 
           candidates = []
           for root_dir, dirs, files in os.walk('.'):
@@ -128,7 +130,6 @@ jobs:
                       candidates.append(os.path.join(root_dir, file))
 
           if candidates:
-              print("Found uploaded icon image:", candidates[0])
               im = Image.open(candidates[0]).convert('RGBA')
               w, h = im.size
               s = int(min(w, h) * 0.90)
@@ -142,7 +143,6 @@ jobs:
               out.paste(im, (0, 0), mask)
               im = out
           else:
-              print("No uploaded image found, generating fallback icon")
               im = Image.new('RGBA', (512, 512), (18, 22, 28, 255))
 
           sizes = {'mipmap-mdpi': 48, 'mipmap-hdpi': 72, 'mipmap-xhdpi': 96, 'mipmap-xxhdpi': 144, 'mipmap-xxxhdpi': 192}
@@ -159,17 +159,25 @@ jobs:
       - name: Accept Android Licenses
         run: yes | flutter doctor --android-licenses || true
 
-      - name: Build Debug APK
-        run: flutter build apk --debug
+      - name: Build Debug APK (ARM64)
+        run: flutter build apk --debug --target-platform android-arm64
 
-      - name: Prepare APK for Artifact
+      - name: Prepare Single APK
         run: |
           mkdir -p output_apk
-          find build/ -name "*.apk" -type f -exec cp {} output_apk/ \;
-          ls -la output_apk/
+          cp build/app/outputs/flutter-apk/app-debug.apk output_apk/WY-Podcast.apk
+          ls -lh output_apk/
 
-      - name: Upload APK Artifact
+      - name: Upload APK Artifact (Uncompressed ZIP)
         uses: actions/upload-artifact@v4
         with:
           name: wys-podcast-apk
-          path: output_apk/
+          path: output_apk/WY-Podcast.apk
+          compression-level: 0
+
+      - name: Publish Direct APK to GitHub Releases (No ZIP Needed)
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh release delete latest --cleanup-tag --yes || true
+          gh release create latest output_apk/WY-Podcast.apk --title "WY's PODCAST APK" --notes "Zip ဖြည်စရာမလိုဘဲ WY-Podcast.apk ကို တိုက်ရိုက် ဒေါင်းလုဒ်ဆွဲ၍ သွင်းနိုင်ပါသည်။"
