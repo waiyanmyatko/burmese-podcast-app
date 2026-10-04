@@ -25,14 +25,136 @@ jobs:
           channel: 'stable'
           cache: true
 
-      - name: Prepare Clean Project and Whisper Model
+      - name: Prepare Clean Project, Native File Picker, Offline Whisper Model, and App Icon
         run: |
           mkdir -p assets/models
           curl -L -o assets/models/ggml-tiny.bin https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-tiny.bin
           rm -rf android test pubspec.lock
-          printf "name: burmese_podcast\ndescription: Burmese Podcast Studio\npublish_to: 'none'\nversion: 1.0.0+1\n\nenvironment:\n  sdk: '>=3.0.0 <4.0.0'\n\ndependencies:\n  flutter:\n    sdk: flutter\n\nflutter:\n  uses-material-design: true\n  assets:\n    - assets/models/ggml-tiny.bin\n" > pubspec.yaml
+          printf "name: burmese_podcast\ndescription: WY Podcast Studio\npublish_to: 'none'\nversion: 1.0.0+1\n\nenvironment:\n  sdk: '>=3.0.0 <4.0.0'\n\ndependencies:\n  flutter:\n    sdk: flutter\n\nflutter:\n  uses-material-design: true\n  assets:\n    - assets/models/ggml-tiny.bin\n" > pubspec.yaml
           flutter pub get
           flutter create . --platforms=android --org com.waiyan.burmesepodcast
+          sed -i 's/android:label="burmese_podcast"/android:label="WY'\''s PODCAST"/g' android/app/src/main/AndroidManifest.xml
+          sed -i 's/android:icon="@mipmap\/ic_launcher"/android:icon="@mipmap\/wy_launcher" android:roundIcon="@mipmap\/wy_launcher"/g' android/app/src/main/AndroidManifest.xml
+          rm -rf android/app/src/main/res/mipmap-anydpi*
+          rm -f android/app/src/main/res/drawable*/ic_launcher*
+          pip install pillow
+          python3 - << 'EOF'
+          import os, glob
+          from PIL import Image, ImageDraw
+
+          kt_body = """import android.app.Activity
+          import android.content.Intent
+          import android.net.Uri
+          import android.provider.OpenableColumns
+          import io.flutter.embedding.android.FlutterActivity
+          import io.flutter.embedding.engine.FlutterEngine
+          import io.flutter.plugin.common.MethodChannel
+          import java.io.File
+          import java.io.FileOutputStream
+
+          class MainActivity: FlutterActivity() {
+              private val CHANNEL = "com.waiyan.burmesepodcast/file_picker"
+              private var pendingResult: MethodChannel.Result? = null
+              private val PICK_FILE_CODE = 9001
+
+              override fun configureFlutterEngine(flutterEngine: FlutterEngine) {
+                  super.configureFlutterEngine(flutterEngine)
+                  MethodChannel(flutterEngine.dartExecutor.binaryMessenger, CHANNEL).setMethodCallHandler { call, result ->
+                      if (call.method == "pickFile") {
+                          pendingResult = result
+                          val mimeType = call.argument<String>("mimeType") ?: "*/*"
+                          val intent = Intent(Intent.ACTION_GET_CONTENT).apply {
+                              type = mimeType
+                              addCategory(Intent.CATEGORY_OPENABLE)
+                          }
+                          startActivityForResult(Intent.createChooser(intent, "Select File"), PICK_FILE_CODE)
+                      } else {
+                          result.notImplemented()
+                      }
+                  }
+              }
+
+              override fun onActivityResult(requestCode: Int, resultCode: Int, data: Intent?) {
+                  super.onActivityResult(requestCode, resultCode, data)
+                  if (requestCode == PICK_FILE_CODE) {
+                      val res = pendingResult
+                      pendingResult = null
+                      if (resultCode == Activity.RESULT_OK && data?.data != null) {
+                          val uri: Uri = data.data!!
+                          try {
+                              var fileName = "selected_media"
+                              contentResolver.query(uri, null, null, null, null)?.use { cursor ->
+                                  val nameIndex = cursor.getColumnIndex(OpenableColumns.DISPLAY_NAME)
+                                  if (nameIndex != -1 && cursor.moveToFirst()) {
+                                      fileName = cursor.getString(nameIndex) ?: "selected_media"
+                                  }
+                              }
+                              val outFile = File(cacheDir, fileName)
+                              contentResolver.openInputStream(uri)?.use { input ->
+                                  FileOutputStream(outFile).use { output ->
+                                      input.copyTo(output)
+                                  }
+                              }
+                              val map = HashMap<String, String>()
+                              map["name"] = fileName
+                              map["path"] = outFile.absolutePath
+                              res?.success(map)
+                          } catch (e: Exception) {
+                              res?.error("READ_ERR", e.localizedMessage, null)
+                          }
+                      } else {
+                          res?.success(null)
+                      }
+                  }
+              }
+          }
+          """
+
+          main_files = glob.glob('android/**/MainActivity.kt', recursive=True)
+          for mf in main_files:
+              with open(mf, 'r') as f:
+                  first_line = f.readline().strip()
+              if not first_line.startswith('package '):
+                  first_line = 'package com.waiyan.burmesepodcast.burmese_podcast'
+              with open(mf, 'w') as f:
+                  f.write(first_line + "\n\n" + kt_body)
+              print("Updated MainActivity:", mf)
+
+          candidates = []
+          for root_dir, dirs, files in os.walk('.'):
+              dirs[:] = [d for d in dirs if d not in ('android', 'build', '.git', '.dart_tool', 'output_apk')]
+              for file in files:
+                  if file.lower().endswith(('.jpg', '.jpeg', '.png')):
+                      candidates.append(os.path.join(root_dir, file))
+
+          if candidates:
+              print("Found uploaded icon image:", candidates[0])
+              im = Image.open(candidates[0]).convert('RGBA')
+              w, h = im.size
+              s = int(min(w, h) * 0.90)
+              left = (w - s) // 2
+              top = (h - s) // 2
+              im = im.crop((left, top, left + s, top + s)).resize((512, 512), Image.Resampling.LANCZOS)
+              mask = Image.new('L', (512, 512), 0)
+              mdraw = ImageDraw.Draw(mask)
+              mdraw.ellipse((2, 2, 510, 510), fill=255)
+              out = Image.new('RGBA', (512, 512), (0, 0, 0, 0))
+              out.paste(im, (0, 0), mask)
+              im = out
+          else:
+              print("No uploaded image found, generating fallback icon")
+              im = Image.new('RGBA', (512, 512), (18, 22, 28, 255))
+
+          sizes = {'mipmap-mdpi': 48, 'mipmap-hdpi': 72, 'mipmap-xhdpi': 96, 'mipmap-xxhdpi': 144, 'mipmap-xxxhdpi': 192}
+          res_base = 'android/app/src/main/res'
+          for folder, sz in sizes.items():
+              p = os.path.join(res_base, folder)
+              os.makedirs(p, exist_ok=True)
+              resized = im.resize((sz, sz), Image.Resampling.LANCZOS)
+              resized.save(os.path.join(p, 'ic_launcher.png'))
+              resized.save(os.path.join(p, 'ic_launcher_round.png'))
+              resized.save(os.path.join(p, 'wy_launcher.png'))
+          EOF
 
       - name: Accept Android Licenses
         run: yes | flutter doctor --android-licenses || true
@@ -49,5 +171,5 @@ jobs:
       - name: Upload APK Artifact
         uses: actions/upload-artifact@v4
         with:
-          name: burmese-podcast-app
+          name: wys-podcast-apk
           path: output_apk/
