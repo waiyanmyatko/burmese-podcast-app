@@ -29,41 +29,21 @@ jobs:
         run: |
           flutter create . --platforms=android --org com.waiyan.burmesepodcast
 
-      - name: Setup Android NDK and SDK Config
-        run: |
-          yes | flutter doctor --android-licenses || true
-          
-          # NDK setup
-          NDK_PATH=$(find $ANDROID_SDK_ROOT/ndk -maxdepth 1 -mindepth 1 | sort -V | tail -n 1)
-          echo "Found NDK: $NDK_PATH"
-          echo "ndk.dir=$NDK_PATH" >> android/local.properties
-          
-          # Configure build.gradle with correct SDK & NDK versions
-          sed -i 's/minSdkVersion .*/minSdkVersion 24/' android/app/build.gradle || true
-          sed -i 's/minSdk = .*/minSdk = 24/' android/app/build.gradle || true
-          sed -i 's/compileSdkVersion .*/compileSdkVersion 34/' android/app/build.gradle || true
-          sed -i 's/compileSdk = .*/compileSdk = 34/' android/app/build.gradle || true
-          sed -i 's/targetSdkVersion .*/targetSdkVersion 34/' android/app/build.gradle || true
-          sed -i 's/targetSdk = .*/targetSdk = 34/' android/app/build.gradle || true
-
       - name: Download Whisper Offline Model
         run: |
           mkdir -p assets/models
           curl -L -o assets/models/ggml-tiny.bin https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-tiny.bin
 
-      - name: Install Dependencies
-        run: flutter pub get
-
-      - name: Build APK via Gradle
+      - name: Configure Flutter & Dependencies
         run: |
-          cd android
-          chmod +x gradlew
-          ./gradlew assembleRelease --stacktrace --info || ./gradlew assembleDebug --stacktrace
+          flutter pub get
+
+      - name: Build Debug APK
+        run: |
+          flutter build apk --debug
 
       - name: Upload APK Artifact
         uses: actions/upload-artifact@v4
         with:
           name: burmese-podcast-app
-          path: |
-            build/app/outputs/flutter-apk/*.apk
-            android/app/build/outputs/apk/*/*/*.apk
+          path: build/app/outputs/flutter-apk/app-debug.apk
