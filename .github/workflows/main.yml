@@ -45,8 +45,10 @@ jobs:
           mkdir -p assets/models
           curl -L -o assets/models/ggml-tiny.bin https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-tiny.bin
 
-      - name: Install Dependencies
-        run: flutter pub get
+      - name: Install Dependencies & Check Dart Errors
+        run: |
+          flutter pub get
+          flutter analyze || true
 
       - name: Build Debug APK
         run: |
@@ -55,7 +57,7 @@ jobs:
       - name: Prepare APK for Artifact
         run: |
           mkdir -p output_apk
-          find . -name "*.apk" -type f -exec cp {} output_apk/ \;
+          find build/app/outputs/flutter-apk/ -name "*.apk" -exec cp {} output_apk/ \; || find . -name "*.apk" -exec cp {} output_apk/ \;
           ls -la output_apk/
 
       - name: Upload APK Artifact
