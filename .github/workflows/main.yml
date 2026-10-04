@@ -25,25 +25,18 @@ jobs:
           channel: 'stable'
           cache: true
 
-      - name: Accept All Android SDK & NDK Licenses
-        run: |
-          for SDK_DIR in "$ANDROID_HOME" "$ANDROID_SDK_ROOT" "/usr/local/lib/android/sdk"; do
-            if [ -d "$SDK_DIR" ]; then
-              mkdir -p "$SDK_DIR/licenses"
-              printf "24333f8a63b6825ea9c5514f83c2829b004d1fee\nd56f5187479791eab51dcfd5987e8701e6b0e826" > "$SDK_DIR/licenses/android-sdk-license"
-              printf "84831b9409646a33ee13ef6102140781e0479965" > "$SDK_DIR/licenses/android-sdk-preview-license"
-              printf "601085b94cd77f0b54ff8640695709915000ce0d" > "$SDK_DIR/licenses/android-googletv-license"
-              printf "33b6a2b64607f11b759f320ef9dff4ae5c47d97a" > "$SDK_DIR/licenses/google-gdk-license"
-              printf "e9acab587f1749a4f1f61866fe34365b28ccfb8f" > "$SDK_DIR/licenses/mips-android-sysimage-license"
-            fi
-          done
-          yes | flutter doctor --android-licenses || true
-
       - name: Recreate Android Project Folder
         run: |
           flutter create . --platforms=android --org com.waiyan.burmesepodcast
 
-      - name: Fix Android SDK Versions
+      - name: Accept All Licenses & Setup Environment
+        run: |
+          yes | flutter doctor --android-licenses || true
+          mkdir -p "$ANDROID_HOME/licenses"
+          echo -e "24333f8a63b6825ea9c5514f83c2829b004d1fee\nd56f5187479791eab51dcfd5987e8701e6b0e826" > "$ANDROID_HOME/licenses/android-sdk-license"
+          echo -e "84831b9409646a33ee13ef6102140781e0479965" > "$ANDROID_HOME/licenses/android-sdk-preview-license"
+
+      - name: Configure Gradle minSdk & App Properties
         run: |
           sed -i 's/minSdk = flutter.minSdkVersion/minSdk = 24/g' android/app/build.gradle || true
           sed -i 's/minSdkVersion flutter.minSdkVersion/minSdkVersion 24/g' android/app/build.gradle || true
@@ -58,11 +51,13 @@ jobs:
       - name: Install Dependencies
         run: flutter pub get
 
-      - name: Build Debug APK
-        run: flutter build apk --debug
+      - name: Build Debug APK with Stacktrace
+        run: |
+          flutter build apk --debug --verbose
 
       - name: Upload APK Artifact
+        if: always()
         uses: actions/upload-artifact@v4
         with:
           name: burmese-podcast-app
-          path: build/app/outputs/flutter-apk/app-debug.apk
+          path: build/app/outputs/flutter-apk/*.apk
