@@ -25,42 +25,54 @@ jobs:
           channel: 'stable'
           cache: true
 
-      - name: Accept Android Licenses
-        run: |
-          yes | flutter doctor --android-licenses || true
-
       - name: Recreate Android Project Folder
         run: |
           flutter create . --platforms=android --org com.waiyan.burmesepodcast
 
-      - name: Configure Android SDK versions
+      - name: Accept Licenses & Configure NDK
         run: |
+          yes | flutter doctor --android-licenses || true
+          mkdir -p "$ANDROID_HOME/licenses" || true
+          echo -e "24333f8a63b6825ea9c5514f83c2829b004d1fee\nd56f5187479791eab51dcfd5987e8701e6b0e826" > "$ANDROID_HOME/licenses/android-sdk-license"
+          
+          # Fix minSdk and compileSdk
           sed -i 's/minSdk = flutter.minSdkVersion/minSdk = 24/g' android/app/build.gradle || true
           sed -i 's/minSdkVersion flutter.minSdkVersion/minSdkVersion 24/g' android/app/build.gradle || true
           sed -i 's/compileSdk = flutter.compileSdkVersion/compileSdk = 34/g' android/app/build.gradle || true
           sed -i 's/targetSdk = flutter.targetSdkVersion/targetSdk = 34/g' android/app/build.gradle || true
+
+          # Set NDK path directly in local.properties
+          NDK_DIR=$(find /usr/local/lib/android/sdk/ndk -maxdepth 1 -mindepth 1 | sort -V | tail -n 1)
+          if [ -n "$NDK_DIR" ]; then
+            echo "ndk.dir=$NDK_DIR" >> android/local.properties
+          fi
 
       - name: Download Whisper Offline Model
         run: |
           mkdir -p assets/models
           curl -L -o assets/models/ggml-tiny.bin https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-tiny.bin
 
-      - name: Install Dependencies & Check Dart Errors
-        run: |
-          flutter pub get
-          flutter analyze || true
+      - name: Install Dependencies
+        run: flutter pub get
 
-      - name: Build Debug APK
+      - name: Build Debug APK with Detailed Logs
         run: |
-          flutter build apk --debug
+          flutter build apk --debug || {
+            echo "================ ERROR LOG START ================"
+            cat build_output.log 2>/dev/null || true
+            cd android && ./gradlew assembleDebug --stacktrace
+          }
 
       - name: Prepare APK for Artifact
+        if: always()
         run: |
           mkdir -p output_apk
-          find build/app/outputs/flutter-apk/ -name "*.apk" -exec cp {} output_apk/ \; || find . -name "*.apk" -exec cp {} output_apk/ \;
+          find build/ -name "*.apk" -type f -exec cp {} output_apk/ \; || true
+          find android/ -name "*.apk" -type f -exec cp {} output_apk/ \; || true
           ls -la output_apk/
 
       - name: Upload APK Artifact
+        if: always()
         uses: actions/upload-artifact@v4
         with:
           name: burmese-podcast-app
