@@ -48,12 +48,16 @@ jobs:
       - name: Install Dependencies
         run: flutter pub get
 
-      - name: Build APK with Error Capture
+      - name: Build Debug APK
         run: |
-          flutter build apk --debug 2>&1 | tee build_output.log || (echo "=== REAL BUILD ERROR ===" && grep -i -C 3 -E "error:|failed|exception" build_output.log | tail -n 40 && exit 1)
+          flutter build apk --debug
 
-      - name: Upload APK Artifact
+      - name: Find & Upload APK Artifact
         uses: actions/upload-artifact@v4
         with:
           name: burmese-podcast-app
-          path: build/app/outputs/flutter-apk/app-debug.apk
+          path: |
+            build/app/outputs/flutter-apk/*.apk
+            android/app/build/outputs/apk/*/*/*.apk
+            **/*.apk
+          if-no-files-found: error
