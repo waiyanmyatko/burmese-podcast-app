@@ -1,5 +1,5 @@
 name: burmese_podcast_app
-description: "A professional Burmese podcast creation app using Flutter and Gemini API."
+description: "A professional Burmese podcast app"
 publish_to: "none"
 version: 1.0.0+1
 
@@ -14,6 +14,7 @@ dependencies:
   http: ^1.2.0
   shared_preferences: ^2.2.2
   path_provider: ^2.1.2
+  whisper_ggml: ^2.6.0
 
 dev_dependencies:
   flutter_test:
@@ -22,3 +23,5 @@ dev_dependencies:
 
 flutter:
   uses-material-design: true
+  assets:
+    - assets/models/
