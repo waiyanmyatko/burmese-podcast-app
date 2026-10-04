@@ -25,52 +25,50 @@ jobs:
           channel: 'stable'
           cache: true
 
-      - name: Clean & Recreate Android Project Folder
-        run: |
-          rm -rf android
-          flutter create . --platforms=android --org com.waiyan.burmesepodcast
-
-      - name: Configure Android SDK 36, minSdk 24 & Licenses
-        run: |
-          for SDK_DIR in "$ANDROID_HOME" "$ANDROID_SDK_ROOT" "/usr/local/lib/android/sdk"; do
-            if [ -d "$SDK_DIR" ]; then
-              mkdir -p "$SDK_DIR/licenses"
-              printf "24333f8a63b6825ea9c5514f83c2829b004d1fee\nd56f5187479791eab51dcfd5987e8701e6b0e826" > "$SDK_DIR/licenses/android-sdk-license"
-              printf "84831b9409646a33ee13ef6102140781e0479965" > "$SDK_DIR/licenses/android-sdk-preview-license"
-            fi
-          done
-          yes | flutter doctor --android-licenses || true
-
-          # Update compileSdk to 36 and minSdk to 24 in both Groovy and Kotlin Gradle files
-          for f in android/app/build.gradle android/app/build.gradle.kts; do
-            if [ -f "$f" ]; then
-              sed -i 's/compileSdk = flutter.compileSdkVersion/compileSdk = 36/g' "$f"
-              sed -i 's/compileSdkVersion flutter.compileSdkVersion/compileSdkVersion 36/g' "$f"
-              sed -i 's/minSdk = flutter.minSdkVersion/minSdk = 24/g' "$f"
-              sed -i 's/minSdkVersion flutter.minSdkVersion/minSdkVersion 24/g' "$f"
-              sed -i 's/targetSdk = flutter.targetSdkVersion/targetSdk = 35/g' "$f"
-              sed -i 's/targetSdkVersion flutter.targetSdkVersion/targetSdkVersion 35/g' "$f"
-            fi
-          done
-
-      - name: Download Whisper Offline Model
+      - name: Prepare Clean pubspec.yaml & Whisper Model
         run: |
           mkdir -p assets/models
           curl -L -o assets/models/ggml-tiny.bin https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-tiny.bin
+          rm -f pubspec.lock
+          cat << 'EOF' > pubspec.yaml
+          name: burmese_podcast
+          description: Burmese Podcast Studio
+          publish_to: 'none'
+          version: 1.0.0+1
 
-      - name: Install Dependencies
-        run: flutter pub get
+          environment:
+            sdk: '>=3.0.0 <4.0.0'
 
-      - name: Run Build and Print Direct Error
+          dependencies:
+            flutter:
+              sdk: flutter
+
+          flutter:
+            uses-material-design: true
+            assets:
+              - assets/models/ggml-tiny.bin
+          EOF
+
+      - name: Clean & Recreate Android Project Folder
+        run: |
+          rm -rf android test
+          flutter pub get
+          flutter create . --platforms=android --org com.waiyan.burmesepodcast
+
+      - name: Accept Android Licenses
+        run: |
+          yes | flutter doctor --android-licenses || true
+
+      - name: Build Debug APK
         run: |
           set +e
           flutter build apk --debug > build_raw.log 2>&1
           STATUS=$?
           if [ $STATUS -ne 0 ]; then
             echo "=================== DETAILED ERROR START ==================="
-            grep -E -C 4 -i "(error:|fatal|failed to|requires libraries|compileSdk|minSdk)" build_raw.log | head -n 50
+            grep -A 25 "\* What went wrong:" build_raw.log || true
             echo "============================================================"
-            tail -n 30 build_raw.log
+            tail -n 50 build_raw.log
             exit $STATUS
           fi
 
