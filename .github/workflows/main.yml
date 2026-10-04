@@ -33,8 +33,9 @@ jobs:
         run: |
           flutter create . --platforms=android --org com.waiyan.burmesepodcast
 
-      - name: Configure Android SDK versions
+      - name: Configure Android Versions & NDK Dir
         run: |
+          # SDK versions
           sed -i 's/minSdk = flutter.minSdkVersion/minSdk = 24/g' android/app/build.gradle || true
           sed -i 's/minSdkVersion flutter.minSdkVersion/minSdkVersion 24/g' android/app/build.gradle || true
           sed -i 's/compileSdk = flutter.compileSdkVersion/compileSdk = 34/g' android/app/build.gradle || true
@@ -48,16 +49,14 @@ jobs:
       - name: Install Dependencies
         run: flutter pub get
 
-      - name: Build Debug APK
+      - name: Build Debug APK with Direct Gradle Error Log
         run: |
-          flutter build apk --debug
+          flutter build apk --debug || (cd android && ./gradlew assembleDebug --stacktrace --info)
 
-      - name: Find & Upload APK Artifact
+      - name: Upload APK Artifact
         uses: actions/upload-artifact@v4
         with:
           name: burmese-podcast-app
           path: |
             build/app/outputs/flutter-apk/*.apk
             android/app/build/outputs/apk/*/*/*.apk
-            **/*.apk
-          if-no-files-found: error
