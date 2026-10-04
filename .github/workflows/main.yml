@@ -25,20 +25,20 @@ jobs:
           channel: 'stable'
           cache: true
 
-      - name: Accept Android Licenses & Install NDK/CMake
-        run: |
-          yes | sdkmanager --licenses || true
-          sdkmanager --install "ndk;25.1.8937393" "cmake;3.22.1"
+      - name: Set up Android NDK & CMake
+        uses: nttld/setup-ndk@v1
+        with:
+          ndk-version: r25c
+          cmake-version: 3.22.1
 
       - name: Recreate Android Project Folder
         run: |
           flutter create . --platforms=android --org com.waiyan.burmesepodcast
 
-      - name: Configure Android minSdkVersion & NDK
+      - name: Configure Android minSdkVersion
         run: |
           sed -i 's/minSdkVersion .*/minSdkVersion 23/' android/app/build.gradle || true
           sed -i 's/minSdk = .*/minSdk = 23/' android/app/build.gradle || true
-          sed -i '/android {/a \    ndkVersion = "25.1.8937393"' android/app/build.gradle || true
 
       - name: Download Whisper Offline Model
         run: |
