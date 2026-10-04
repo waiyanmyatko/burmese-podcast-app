@@ -59,16 +59,19 @@ jobs:
         run: |
           yes | flutter doctor --android-licenses || true
 
-      - name: Build Debug APK
+      - name: Analyze Dart Code
+        run: |
+          flutter analyze || true
+
+      - name: Run Build and Print Direct Error
         run: |
           set +e
           flutter build apk --debug > build_raw.log 2>&1
           STATUS=$?
           if [ $STATUS -ne 0 ]; then
             echo "=================== DETAILED ERROR START ==================="
-            grep -A 25 "\* What went wrong:" build_raw.log || true
+            grep -E -C 3 -i "(Error:|lib/main.dart|exception)" build_raw.log | head -n 45 || tail -n 40 build_raw.log
             echo "============================================================"
-            tail -n 50 build_raw.log
             exit $STATUS
           fi
 
