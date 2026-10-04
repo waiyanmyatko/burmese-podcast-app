@@ -29,17 +29,17 @@ jobs:
         run: |
           flutter create . --platforms=android --org com.waiyan.burmesepodcast
 
-      - name: Accept Android Licenses & Link NDK
+      - name: Configure Android SDK versions & NDK
         run: |
           yes | flutter doctor --android-licenses || true
           NDK_PATH=$(find $ANDROID_SDK_ROOT/ndk -maxdepth 1 -mindepth 1 | sort -V | tail -n 1)
-          echo "Found NDK at: $NDK_PATH"
           echo "ndk.dir=$NDK_PATH" >> android/local.properties
-
-      - name: Configure Android minSdkVersion
-        run: |
-          sed -i 's/minSdkVersion .*/minSdkVersion 23/' android/app/build.gradle || true
-          sed -i 's/minSdk = .*/minSdk = 23/' android/app/build.gradle || true
+          
+          # Fix minSdkVersion to 24 (required by whisper/ffmpeg) and compileSdk to 34
+          sed -i 's/minSdkVersion .*/minSdkVersion 24/' android/app/build.gradle || true
+          sed -i 's/minSdk = .*/minSdk = 24/' android/app/build.gradle || true
+          sed -i 's/compileSdkVersion .*/compileSdkVersion 34/' android/app/build.gradle || true
+          sed -i 's/compileSdk = .*/compileSdk = 34/' android/app/build.gradle || true
 
       - name: Download Whisper Offline Model
         run: |
@@ -49,8 +49,8 @@ jobs:
       - name: Install Dependencies
         run: flutter pub get
 
-      - name: Build APK
-        run: flutter build apk --release
+      - name: Build APK (with verbose logs)
+        run: flutter build apk --release --verbose
 
       - name: Upload APK Artifact
         uses: actions/upload-artifact@v4
