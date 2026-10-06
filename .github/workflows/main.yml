@@ -195,7 +195,7 @@ jobs:
                       elif d >= 0.43:
                           raw.extend((212, 175, 55, 255))
                       else:
-                          in_cap = (abs( dx ) <= 0.08 and 0.27 <= ny <= 0.46) or ((dx * dx + (ny - 0.27) ** 2) <= 0.08 ** 2) or ((dx * dx + (ny - 0.46) ** 2) <= 0.08 ** 2)
+                          in_cap = (abs(dx) <= 0.08 and 0.27 <= ny <= 0.46) or ((dx * dx + (ny - 0.27) ** 2) <= 0.08 ** 2) or ((dx * dx + (ny - 0.46) ** 2) <= 0.08 ** 2)
                           dc = (dx * dx + (ny - 0.45) ** 2) ** 0.5
                           in_arc = (0.135 <= dc <= 0.168) and (ny >= 0.45)
                           in_stem = (abs(dx) <= 0.02) and (0.60 <= ny <= 0.74)
