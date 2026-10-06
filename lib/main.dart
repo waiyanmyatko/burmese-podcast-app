@@ -111,7 +111,6 @@ class _PodcastStudioScreenState extends State<PodcastStudioScreen> {
   bool _isGeneratingPodcast = false;
   String _generationStatus = '';
   String _lastLocalAudioPath = '';
-  String _lastPublicAudioPath = '';
   bool _isPlayingAudio = false;
 
   final List<String> _styleOptions = [
@@ -326,9 +325,7 @@ class _PodcastStudioScreenState extends State<PodcastStudioScreen> {
       _msg('အသံဖိုင် သို့မဟုတ် ဗီဒီယိုဖိုင် အရင်ရွေးပေးပါ');
       return;
     }
-    if (_modelFilePath.isEmpty) {
-      await _prepareOfflineModel();
-    }
+    if (_modelFilePath.isEmpty) await _prepareOfflineModel();
     setState(() => _isProcessingSTT = true);
     try {
       final res = await _channel.invokeMethod('transcribeOffline', {
@@ -373,37 +370,85 @@ class _PodcastStudioScreenState extends State<PodcastStudioScreen> {
     } catch (_) {}
   }
 
+  List<String> _splitTextIntoChunks(String text, int maxLen) {
+    final List<String> chunks = [];
+    final paragraphs = text.split(RegExp(r'\n+'));
+    final StringBuffer current = StringBuffer();
+
+    for (final para in paragraphs) {
+      final sentences = para.split(RegExp(r'(?<=[။.!?])\s+'));
+      for (final s in sentences) {
+        if (current.length + s.length + 1 > maxLen) {
+          if (current.isNotEmpty) {
+            chunks.add(current.toString().trim());
+            current.clear();
+          }
+          if (s.length > maxLen) {
+            for (int i = 0; i < s.length; i += maxLen) {
+              chunks.add(s.substring(i, i + maxLen > s.length ? s.length : i + maxLen));
+            }
+          } else {
+            current.write('$s ');
+          }
+        } else {
+          current.write('$s ');
+        }
+      }
+      current.write('\n');
+    }
+    if (current.toString().trim().isNotEmpty) {
+      chunks.add(current.toString().trim());
+    }
+    return chunks.isEmpty ? [text] : chunks;
+  }
+
   Future<String> _runGeminiScript(String src, String sys) async {
     final c = HttpClient();
-    final List<Map<String, dynamic>> contents = [
-      {'role': 'user', 'parts': [{'text': src}]}
-    ];
+    final srcParts = _splitTextIntoChunks(src, 12000);
     final sb = StringBuffer();
-    for (int i = 0; i < 10; i++) {
-      final req = await c.postUrl(Uri.parse(
-        'https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=$_apiKey',
-      ));
-      req.headers.set('Content-Type', 'application/json; charset=utf-8');
-      req.add(utf8.encode(jsonEncode({
-        'systemInstruction': {'parts': [{'text': sys}]},
-        'contents': contents,
-        'generationConfig': {'temperature': 0.4},
-      })));
-      final resp = await req.close();
-      final rTxt = await resp.transform(utf8.decoder).join();
-      if (resp.statusCode != 200) throw Exception('API Error: $rTxt');
-      final j = jsonDecode(rTxt);
-      final chunk = (j['candidates']?[0]?['content']?['parts']?[0]?['text'] ?? '').toString();
-      sb.writeln(chunk);
-      if (chunk.contains('[MORE]') && !chunk.contains('[END OF SCRIPT]')) {
-        contents.add({'role': 'model', 'parts': [{'text': chunk}]});
-        contents.add({'role': 'user', 'parts': [{'text': 'Next'}]});
-      } else {
-        break;
+
+    for (int sIdx = 0; sIdx < srcParts.length; sIdx++) {
+      final partHeader = srcParts.length > 1 ? '[PART ${sIdx + 1}]\n' : '';
+      final List<Map<String, dynamic>> contents = [
+        {'role': 'user', 'parts': [{'text': '$partHeader${srcParts[sIdx]}'}]}
+      ];
+
+      for (int i = 0; i < 12; i++) {
+        if (mounted) {
+          setState(() {
+            _generationStatus = 'Gem Prompt ဖြင့် မြန်မာ Script ရေးသားနေသည် (အပိုင်း ${sIdx + 1}/${srcParts.length} - Step ${i + 1})...';
+          });
+        }
+        final req = await c.postUrl(Uri.parse(
+          'https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=$_apiKey',
+        ));
+        req.headers.set('Content-Type', 'application/json; charset=utf-8');
+        req.add(utf8.encode(jsonEncode({
+          'systemInstruction': {'parts': [{'text': sys}]},
+          'contents': contents,
+          'generationConfig': {'temperature': 0.4},
+        })));
+        final resp = await req.close();
+        final rTxt = await resp.transform(utf8.decoder).join();
+        if (resp.statusCode != 200) throw Exception('API Error: $rTxt');
+        final j = jsonDecode(rTxt);
+        final chunk = (j['candidates']?[0]?['content']?['parts']?[0]?['text'] ?? '').toString();
+        sb.writeln(chunk);
+        if (chunk.contains('[MORE]') && !chunk.contains('[END OF SCRIPT]')) {
+          contents.add({'role': 'model', 'parts': [{'text': chunk}]});
+          contents.add({'role': 'user', 'parts': [{'text': 'Next'}]});
+        } else {
+          break;
+        }
       }
     }
     c.close();
-    return sb.toString().replaceAll('[MORE]', '').replaceAll('[END OF SCRIPT]', '').trim();
+    return sb
+        .toString()
+        .replaceAll(RegExp(r'\[PART\s*\d+\]'), '')
+        .replaceAll('[MORE]', '')
+        .replaceAll('[END OF SCRIPT]', '')
+        .trim();
   }
 
   Uint8List _pcmToWav(Uint8List pcm, int rate) {
@@ -430,32 +475,52 @@ class _PodcastStudioScreenState extends State<PodcastStudioScreen> {
     return b.toBytes();
   }
 
-  Future<Uint8List?> _tryCloudTTS(String txt) async {
+  Future<Uint8List?> _tryCloudTTSMultiPart(String fullScript) async {
     if (_apiKey.isEmpty) return null;
     try {
       String vName = _voiceGender.startsWith('Female') ? 'Kore' : 'Puck';
       for (final n in ['Puck', 'Charon', 'Fenrir', 'Orus', 'Kore', 'Aoede', 'Zephyr', 'Leda']) {
         if (_voiceGender.contains(n)) vName = n;
       }
+
+      final chunks = _splitTextIntoChunks(fullScript, 1400);
+      final combinedPcm = BytesBuilder(copy: false);
       final c = HttpClient();
-      final req = await c.postUrl(Uri.parse(
-        'https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-preview-tts:generateContent?key=$_apiKey',
-      ));
-      req.headers.set('Content-Type', 'application/json; charset=utf-8');
-      req.add(utf8.encode(jsonEncode({
-        'contents': [{'role': 'user', 'parts': [{'text': txt}]}],
-        'generationConfig': {
-          'responseModalities': ['AUDIO'],
-          'speechConfig': {'voiceConfig': {'prebuiltVoiceConfig': {'voiceName': vName}}}
+
+      for (int i = 0; i < chunks.length; i++) {
+        if (mounted) {
+          setState(() {
+            _generationStatus = 'AI Voice ($vName) ဖြင့် အသံဖိုင် အပိုင်း (${i + 1}/${chunks.length}) ထုတ်ပြီး ဆက်နေသည်...';
+          });
         }
-      })));
-      final resp = await req.close();
-      final rTxt = await resp.transform(utf8.decoder).join();
+        final req = await c.postUrl(Uri.parse(
+          'https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-preview-tts:generateContent?key=$_apiKey',
+        ));
+        req.headers.set('Content-Type', 'application/json; charset=utf-8');
+        req.add(utf8.encode(jsonEncode({
+          'contents': [{'role': 'user', 'parts': [{'text': chunks[i]}]}],
+          'generationConfig': {
+            'responseModalities': ['AUDIO'],
+            'speechConfig': {'voiceConfig': {'prebuiltVoiceConfig': {'voiceName': vName}}}
+          }
+        })));
+        final resp = await req.close();
+        final rTxt = await resp.transform(utf8.decoder).join();
+        if (resp.statusCode != 200) {
+          c.close();
+          return null;
+        }
+        final b64 = (jsonDecode(rTxt)['candidates']?[0]?['content']?['parts']?[0]?['inlineData']?['data'] ?? '').toString();
+        if (b64.isEmpty) {
+          c.close();
+          return null;
+        }
+        combinedPcm.add(base64Decode(b64));
+      }
       c.close();
-      if (resp.statusCode != 200) return null;
-      final b64 = (jsonDecode(rTxt)['candidates']?[0]?['content']?['parts']?[0]?['inlineData']?['data'] ?? '').toString();
-      if (b64.isEmpty) return null;
-      return _pcmToWav(base64Decode(b64), 24000);
+      final allPcmBytes = combinedPcm.toBytes();
+      if (allPcmBytes.isEmpty) return null;
+      return _pcmToWav(allPcmBytes, 24000);
     } catch (_) {
       return null;
     }
@@ -475,7 +540,7 @@ class _PodcastStudioScreenState extends State<PodcastStudioScreen> {
       _isGeneratingPodcast = true;
       _generationStatus = _useGemPrompt
           ? 'Gem ($_selectedGemOption) ဖြင့် မြန်မာ Script ပြောင်းလဲနေသည်...'
-          : 'စာသားကို အသံဖိုင်အဖြစ် ထုတ်လုပ်နေသည်...';
+          : 'စာသားများကို အပိုင်းခွဲ၍ အသံဖိုင် တစ်ပုဒ်တည်းအဖြစ် ပေါင်းစပ်ထုတ်လုပ်နေသည်...';
     });
     try {
       String script = input;
@@ -488,10 +553,15 @@ class _PodcastStudioScreenState extends State<PodcastStudioScreen> {
       if (!mounted) return;
       setState(() {
         _generatedScriptController.text = script;
-        _generationStatus = 'Voice ($_voiceGender) ဖြင့် အသံဖိုင် ထုတ်ယူသိမ်းဆည်းနေသည်...';
       });
 
-      final Uint8List? cloudWav = await _tryCloudTTS(script);
+      final Uint8List? cloudWav = await _tryCloudTTSMultiPart(script);
+      if (mounted && cloudWav == null) {
+        setState(() {
+          _generationStatus = 'အသံဖိုင် အပိုင်းများအားလုံးကို တစ်ပုဒ်တည်းအဖြစ် ဆက်၍ သိမ်းဆည်းနေသည်...';
+        });
+      }
+
       final dynamic res = await _channel.invokeMethod('generateTTS', {
         'text': script,
         'speed': _speed,
@@ -505,8 +575,7 @@ class _PodcastStudioScreenState extends State<PodcastStudioScreen> {
       setState(() {
         _isGeneratingPodcast = false;
         _lastLocalAudioPath = localPath;
-        _lastPublicAudioPath = publicPath;
-        _generationStatus = '✓ အသံဖိုင် သိမ်းဆည်းပြီးပါပြီ: $publicPath';
+        _generationStatus = '✓ တစ်ပုဒ်တည်း ပေါင်းစပ်ပြီးသော အသံဖိုင် သိမ်းဆည်းပြီးပါပြီ: $publicPath';
       });
       await _togglePlayAudio();
     } catch (e) {
