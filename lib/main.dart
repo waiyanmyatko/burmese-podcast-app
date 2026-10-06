@@ -96,13 +96,13 @@ class _PodcastStudioScreenState extends State<PodcastStudioScreen> {
 
   final List<String> _voices = [
     'Tutor - Bodi (Quiet & intimate · Low pitch)',
+    'Tutor - Lumi (Warm & approachable · Low pitch)',
+    'Tutor - Sola (Gentle & relaxed · Very high pitch)',
+    'Tutor - Varo (Laid-back & chill · Low pitch)',
     'Tutor - Sadaltager (Knowledgeable · Middle pitch)',
     'Tutor - Sulafat (Warm · Middle pitch)',
-    'Tutor - Lumi (Warm & approachable · Low pitch)',
-    'Tutor - Varo (Laid-back & chill · Low pitch)',
-    'Tutor - Sola (Gentle & relaxed · Very high pitch)',
-    'Tutor - Fola (Clear Tutor Voice)',
     'Tutor - Zephyr (Bright · Higher pitch)',
+    'Tutor - Fola (Clear Tutor Voice)',
     'Male - Puck (သွက်လက်ဖော်ရွေသော အမျိုးသားသံ)',
     'Male - Charon (တည်ကြည်ဩဇာရှိသော အမျိုးသားသံ)',
     'Male - Fenrir (တက်ကြွကြည်လင်သော အမျိုးသားသံ)',
@@ -443,20 +443,20 @@ class _PodcastStudioScreenState extends State<PodcastStudioScreen> {
 
     int samplePairs = (bytes.length ~/ 2).clamp(0, 200);
     if (samplePairs > 4) {
-      int odd High10or00 = 0;
-      int evenHigh10or00 = 0;
+      int oddHigh = 0;
+      int evenHigh = 0;
       for (int i = 0; i < samplePairs * 2; i += 2) {
-        if (bytes[i + 1] == 0x10 || bytes[i + 1] == 0x00) oddHigh10or00++;
-        if (bytes[i] == 0x10 || bytes[i] == 0x00) evenHigh10or00++;
+        if (bytes[i + 1] == 0x10 || bytes[i + 1] == 0x00) oddHigh++;
+        if (bytes[i] == 0x10 || bytes[i] == 0x00) evenHigh++;
       }
-      if (oddHigh10or00 > samplePairs * 0.35) {
+      if (oddHigh > samplePairs * 0.35) {
         final codes = <int>[];
         for (int i = 0; i + 1 < bytes.length; i += 2) {
           codes.add(bytes[i] | (bytes[i + 1] << 8));
         }
         return _cleanTextFormatting(String.fromCharCodes(codes));
       }
-      if (evenHigh10or00 > samplePairs * 0.35) {
+      if (evenHigh > samplePairs * 0.35) {
         final codes = <int>[];
         for (int i = 0; i + 1 < bytes.length; i += 2) {
           codes.add((bytes[i] << 8) | bytes[i + 1]);
@@ -690,13 +690,13 @@ class _PodcastStudioScreenState extends State<PodcastStudioScreen> {
   String _extractSelectedVoiceName() {
     for (final n in [
       'Bodi',
+      'Lumi',
+      'Sola',
+      'Varo',
       'Sadaltager',
       'Sulafat',
-      'Lumi',
-      'Varo',
-      'Sola',
-      'Fola',
       'Zephyr',
+      'Fola',
       'Puck',
       'Charon',
       'Fenrir',
