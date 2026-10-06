@@ -28,7 +28,7 @@ jobs:
           channel: 'stable'
           cache: true
 
-      - name: Build Whisper JNI and Configure Android
+      - name: Build Fast Whisper JNI and Configure Android
         run: |
           sudo apt-get update && sudo apt-get install -y python3-pil cmake ninja-build
           mkdir -p assets/models
@@ -90,14 +90,21 @@ jobs:
           #include <string>
           #include "whisper.h"
 
+          static struct whisper_context *g_ctx = nullptr;
+          static std::string g_loaded_path = "";
+
           extern "C" JNIEXPORT jstring JNICALL
           Java_com_waiyan_whisper_WhisperBridge_transcribe(
               JNIEnv *env, jclass, jstring model_path_j, jfloatArray pcm_j) {
               const char *model_path = env->GetStringUTFChars(model_path_j, nullptr);
-              struct whisper_context_params cparams = whisper_context_default_params();
-              struct whisper_context *ctx = whisper_init_from_file_with_params(model_path, cparams);
+              if (!g_ctx || g_loaded_path != model_path) {
+                  if (g_ctx) whisper_free(g_ctx);
+                  struct whisper_context_params cparams = whisper_context_default_params();
+                  g_ctx = whisper_init_from_file_with_params(model_path, cparams);
+                  g_loaded_path = model_path;
+              }
               env->ReleaseStringUTFChars(model_path_j, model_path);
-              if (!ctx) return env->NewStringUTF("");
+              if (!g_ctx) return env->NewStringUTF("");
 
               jsize n_samples = env->GetArrayLength(pcm_j);
               jfloat *pcm_data = env->GetFloatArrayElements(pcm_j, nullptr);
@@ -107,23 +114,26 @@ jobs:
               wparams.print_special = false;
               wparams.print_realtime = false;
               wparams.print_timestamps = false;
-              wparams.n_threads = 4;
+              wparams.single_segment = false;
+              wparams.no_context = true;
+              wparams.greedy.best_of = 1;
+              wparams.temperature_inc = 0.0f;
+              wparams.n_threads = 6;
 
               std::string out_text = "";
-              if (whisper_full(ctx, wparams, pcm_data, n_samples) == 0) {
-                  int n_seg = whisper_full_n_segments(ctx);
+              if (whisper_full(g_ctx, wparams, pcm_data, n_samples) == 0) {
+                  int n_seg = whisper_full_n_segments(g_ctx);
                   for (int i = 0; i < n_seg; ++i) {
-                      const char *seg = whisper_full_get_segment_text(ctx, i);
+                      const char *seg = whisper_full_get_segment_text(g_ctx, i);
                       if (seg) out_text += seg;
                   }
               }
               env->ReleaseFloatArrayElements(pcm_j, pcm_data, JNI_ABORT);
-              whisper_free(ctx);
               return env->NewStringUTF(out_text.c_str());
           }
           CPPEOF
 
-          printf "\nadd_library(whisper_jni SHARED whisper_jni.cpp)\ntarget_link_libraries(whisper_jni PRIVATE whisper log android)\n" >> /tmp/wcpp/CMakeLists.txt
+          printf "\nadd_compile_options(-O3 -ffast-math -funroll-loops -DNDEBUG)\nadd_library(whisper_jni SHARED whisper_jni.cpp)\ntarget_link_libraries(whisper_jni PRIVATE whisper log android)\n" >> /tmp/wcpp/CMakeLists.txt
 
           NDK_PATH=$(ls -d $ANDROID_HOME/ndk/* | sort -V | tail -n 1)
           cmake -GNinja -B /tmp/wcpp/build -S /tmp/wcpp \
@@ -179,8 +189,8 @@ jobs:
           class MainActivity: FlutterActivity() {
               private val chName = "com.waiyan.burmesepodcast/file_picker"
               private var pendingRes: MethodChannel.Result? = null
-              private var pickMode = "media"
               private var player: MediaPlayer? = null
+              private var loadedPath: String = ""
 
               override fun configureFlutterEngine(flutterEngine: FlutterEngine) {
                   super.configureFlutterEngine(flutterEngine)
@@ -225,10 +235,9 @@ jobs:
                           }
                           "pickFile" -> {
                               pendingRes = res
-                              pickMode = call.argument<String>("mode") ?: "media"
                               val mime = call.argument<String>("mimeType") ?: "*/*"
                               val i = Intent(Intent.ACTION_GET_CONTENT).apply {
-                                  type = if (pickMode == "txt") "*/*" else mime
+                                  type = mime
                                   addCategory(Intent.CATEGORY_OPENABLE)
                               }
                               startActivityForResult(Intent.createChooser(i, "Select File"), 9001)
@@ -267,14 +276,43 @@ jobs:
                           "playAudio" -> {
                               val p = call.argument<String>("path") ?: ""
                               try {
-                                  player?.release()
-                                  player = MediaPlayer().apply { setDataSource(p); prepare(); start() }
-                                  res.success(true)
+                                  if (player != null && loadedPath == p) {
+                                      player?.start()
+                                  } else {
+                                      player?.release()
+                                      loadedPath = p
+                                      player = MediaPlayer().apply {
+                                          setDataSource(p)
+                                          prepare()
+                                          start()
+                                      }
+                                  }
+                                  res.success(mapOf("dur" to (player?.duration ?: 0), "pos" to (player?.currentPosition ?: 0)))
                               } catch (e: Exception) { res.error("PLAY", e.localizedMessage, null) }
                           }
-                          "stopAudio" -> {
-                              try { player?.stop(); player?.release(); player = null } catch (_: Exception) {}
+                          "pauseAudio" -> {
+                              try { player?.pause() } catch (_: Exception) {}
                               res.success(true)
+                          }
+                          "stopAudio" -> {
+                              try {
+                                  player?.stop()
+                                  player?.release()
+                                  player = null
+                                  loadedPath = ""
+                              } catch (_: Exception) {}
+                              res.success(true)
+                          }
+                          "seekAudio" -> {
+                              val ms = call.argument<Int>("pos") ?: 0
+                              try { player?.seekTo(ms) } catch (_: Exception) {}
+                              res.success(true)
+                          }
+                          "audioState" -> {
+                              val playing = try { player?.isPlaying ?: false } catch (_: Exception) { false }
+                              val pos = try { player?.currentPosition ?: 0 } catch (_: Exception) { 0 }
+                              val dur = try { player?.duration ?: 0 } catch (_: Exception) { 0 }
+                              res.success(mapOf("playing" to playing, "pos" to pos, "dur" to dur))
                           }
                           else -> res.notImplemented()
                       }
@@ -320,12 +358,13 @@ jobs:
                               val frames = sb.remaining() / ch
                               val step = sr.toDouble() / 16000.0
                               var pos = 0.0
+                              val invCh = 1.0f / (32768.0f * ch.toFloat())
                               while (pos.toInt() < frames) {
                                   val base = pos.toInt() * ch
-                                  var sum = 0f
-                                  for (c in 0 until ch) if (base + c < sb.limit()) sum += sb.get(base + c).toFloat() / 32768.0f
+                                  var sum = 0
+                                  for (c in 0 until ch) if (base + c < sb.limit()) sum += sb.get(base + c).toInt()
                                   if (count >= pcm.size) pcm = pcm.copyOf(pcm.size * 2)
-                                  pcm[count++] = sum / ch.toFloat()
+                                  pcm[count++] = sum.toFloat() * invCh
                                   pos += step
                               }
                           }
@@ -371,14 +410,10 @@ jobs:
                                   val i = c.getColumnIndex(OpenableColumns.DISPLAY_NAME)
                                   if (i != -1 && c.moveToFirst()) n = c.getString(i) ?: "selected_file"
                               }
-                              if (pickMode == "txt") {
-                                  val txt = contentResolver.openInputStream(u)?.bufferedReader()?.readText() ?: ""
-                                  r?.success(mapOf("name" to n, "content" to txt))
-                              } else {
-                                  val f = File(cacheDir, n)
-                                  contentResolver.openInputStream(u)?.use { inp -> FileOutputStream(f).use { inp.copyTo(it) } }
-                                  r?.success(mapOf("name" to n, "path" to f.absolutePath))
-                              }
+                              val safeName = n.replace(Regex("[^a-zA-Z0-9._-]"), "_")
+                              val f = File(cacheDir, safeName)
+                              contentResolver.openInputStream(u)?.use { inp -> FileOutputStream(f).use { inp.copyTo(it) } }
+                              r?.success(mapOf("name" to n, "path" to f.absolutePath))
                           } catch (e: Exception) {
                               r?.error("READ_ERR", e.localizedMessage, null)
                           }
