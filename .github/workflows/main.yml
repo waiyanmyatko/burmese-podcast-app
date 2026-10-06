@@ -28,9 +28,8 @@ jobs:
           channel: 'stable'
           cache: true
 
-      - name: Prepare Clean Project, Native File Picker, TTS Engine, and App Icon
+      - name: Prepare Project, Native Engines, and App Icon
         run: |
-          mkdir -p assets/models
           rm -rf android test pubspec.lock
           printf "name: burmese_podcast\ndescription: WY Podcast Studio\npublish_to: 'none'\nversion: 1.0.0+1\n\nenvironment:\n  sdk: '>=3.0.0 <4.0.0'\n\ndependencies:\n  flutter:\n    sdk: flutter\n\nflutter:\n  uses-material-design: true\n" > pubspec.yaml
           flutter pub get
@@ -42,16 +41,15 @@ jobs:
           python3 - << 'EOF'
           import os, glob, struct, zlib
 
-          manifest_path = 'android/app/src/main/AndroidManifest.xml'
-          if os.path.exists(manifest_path):
-              with open(manifest_path, 'r') as f:
-                  m_content = f.read()
-              extra_manifest = '<queries><intent><action android:name="android.intent.action.TTS_SERVICE" /></intent></queries>\n    <uses-permission android:name="android.permission.READ_EXTERNAL_STORAGE" />\n    <uses-permission android:name="android.permission.WRITE_EXTERNAL_STORAGE" />\n    <application'
-              m_content = m_content.replace('<application', extra_manifest, 1)
-              with open(manifest_path, 'w') as f:
-                  f.write(m_content)
+          mp = 'android/app/src/main/AndroidManifest.xml'
+          if os.path.exists(mp):
+              with open(mp, 'r') as f:
+                  mc = f.read()
+              ex = '<queries><intent><action android:name="android.intent.action.TTS_SERVICE" /></intent></queries>\n    <uses-permission android:name="android.permission.READ_EXTERNAL_STORAGE" />\n    <uses-permission android:name="android.permission.WRITE_EXTERNAL_STORAGE" />\n    <application'
+              with open(mp, 'w') as f:
+                  f.write(mc.replace('<application', ex, 1))
 
-          kt_body = """import android.app.Activity
+          kt = """import android.app.Activity
           import android.content.Intent
           import android.net.Uri
           import android.os.Bundle
@@ -69,9 +67,9 @@ jobs:
           class MainActivity: FlutterActivity(), TextToSpeech.OnInitListener {
               private val CHANNEL = "com.waiyan.burmesepodcast/file_picker"
               private var pendingResult: MethodChannel.Result? = null
-              private val PICK_FILE_CODE = 9001
+              private val PICK_CODE = 9001
               private var tts: TextToSpeech? = null
-              private var isTtsReady = false
+              private var ttsReady = false
 
               override fun configureFlutterEngine(flutterEngine: FlutterEngine) {
                   super.configureFlutterEngine(flutterEngine)
@@ -79,43 +77,32 @@ jobs:
                   MethodChannel(flutterEngine.dartExecutor.binaryMessenger, CHANNEL).setMethodCallHandler { call, result ->
                       if (call.method == "pickFile") {
                           pendingResult = result
-                          val mimeType = call.argument<String>("mimeType") ?: "*/*"
+                          val mime = call.argument<String>("mimeType") ?: "*/*"
                           val intent = Intent(Intent.ACTION_GET_CONTENT).apply {
-                              type = mimeType
+                              type = mime
                               addCategory(Intent.CATEGORY_OPENABLE)
                           }
-                          startActivityForResult(Intent.createChooser(intent, "Select File"), PICK_FILE_CODE)
+                          startActivityForResult(Intent.createChooser(intent, "Select File"), PICK_CODE)
                       } else if (call.method == "synthesizeTTS") {
-                          val rawText = call.argument<String>("text") ?: ""
-                          val speed = call.argument<Double>("speed") ?: 1.0
-                          val outputPath = call.argument<String>("outputPath") ?: ""
-                          if (rawText.isEmpty() || outputPath.isEmpty()) {
-                              result.error("INVALID_ARGS", "Text or output path is empty", null)
+                          val raw = call.argument<String>("text") ?: ""
+                          val spd = call.argument<Double>("speed") ?: 1.0
+                          val outPath = call.argument<String>("outputPath") ?: ""
+                          if (raw.isEmpty() || outPath.isEmpty() || !ttsReady || tts == null) {
+                              result.error("TTS_ERR", "TTS not ready or empty text", null)
                               return@setMethodCallHandler
                           }
-                          if (!isTtsReady || tts == null) {
-                              result.error("TTS_NOT_READY", "Android TTS Engine not ready", null)
-                              return@setMethodCallHandler
-                          }
-                          val safeText = if (rawText.length > 3900) rawText.substring(0, 3900) else rawText
-                          tts?.setSpeechRate(speed.toFloat())
-                          val destFile = File(outputPath)
-                          destFile.parentFile?.mkdirs()
-                          val utteranceId = "WY_" + System.currentTimeMillis()
+                          val txt = if (raw.length > 3900) raw.substring(0, 3900) else raw
+                          tts?.setSpeechRate(spd.toFloat())
+                          val dest = File(outPath)
+                          dest.parentFile?.mkdirs()
+                          val uid = "WY_" + System.currentTimeMillis()
                           tts?.setOnUtteranceProgressListener(object : UtteranceProgressListener() {
                               override fun onStart(id: String?) {}
-                              override fun onDone(id: String?) {
-                                  runOnUiThread { result.success(destFile.absolutePath) }
-                              }
-                              override fun onError(id: String?) {
-                                  runOnUiThread { result.error("TTS_ERR", "TTS synthesis failed", null) }
-                              }
+                              override fun onDone(id: String?) { runOnUiThread { result.success(dest.absolutePath) } }
+                              override fun onError(id: String?) { runOnUiThread { result.error("ERR", "Synth failed", null) } }
                           })
-                          val params = Bundle()
-                          val st = tts?.synthesizeToFile(safeText, params, destFile, utteranceId)
-                          if (st != TextToSpeech.SUCCESS) {
-                              result.error("SYNTH_FAIL", "synthesizeToFile failed", null)
-                          }
+                          val st = tts?.synthesizeToFile(txt, Bundle(), dest, uid)
+                          if (st != TextToSpeech.SUCCESS) result.error("FAIL", "Synth call failed", null)
                       } else {
                           result.notImplemented()
                       }
@@ -125,34 +112,30 @@ jobs:
               override fun onInit(status: Int) {
                   if (status == TextToSpeech.SUCCESS) {
                       tts?.language = Locale.US
-                      isTtsReady = true
+                      ttsReady = true
                   }
               }
 
               override fun onActivityResult(requestCode: Int, resultCode: Int, data: Intent?) {
                   super.onActivityResult(requestCode, resultCode, data)
-                  if (requestCode == PICK_FILE_CODE) {
+                  if (requestCode == PICK_CODE) {
                       val res = pendingResult
                       pendingResult = null
                       if (resultCode == Activity.RESULT_OK && data?.data != null) {
                           val uri: Uri = data.data!!
                           try {
-                              var fileName = "selected_media"
-                              contentResolver.query(uri, null, null, null, null)?.use { cursor ->
-                                  val nameIndex = cursor.getColumnIndex(OpenableColumns.DISPLAY_NAME)
-                                  if (nameIndex != -1 && cursor.moveToFirst()) {
-                                      fileName = cursor.getString(nameIndex) ?: "selected_media"
-                                  }
+                              var name = "selected_media"
+                              contentResolver.query(uri, null, null, null, null)?.use { c ->
+                                  val idx = c.getColumnIndex(OpenableColumns.DISPLAY_NAME)
+                                  if (idx != -1 && c.moveToFirst()) name = c.getString(idx) ?: "selected_media"
                               }
-                              val outFile = File(cacheDir, fileName)
-                              contentResolver.openInputStream(uri)?.use { input ->
-                                  FileOutputStream(outFile).use { output ->
-                                      input.copyTo(output)
-                                  }
+                              val out = File(cacheDir, name)
+                              contentResolver.openInputStream(uri)?.use { inp ->
+                                  FileOutputStream(out).use { o -> inp.copyTo(o) }
                               }
                               val map = HashMap<String, String>()
-                              map["name"] = fileName
-                              map["path"] = outFile.absolutePath
+                              map["name"] = name
+                              map["path"] = out.absolutePath
                               res?.success(map)
                           } catch (e: Exception) {
                               res?.error("READ_ERR", e.localizedMessage, null)
@@ -171,55 +154,46 @@ jobs:
           }
           """
 
-          main_files = glob.glob('android/**/MainActivity.kt', recursive=True)
-          for mf in main_files:
+          for mf in glob.glob('android/**/MainActivity.kt', recursive=True):
               with open(mf, 'r') as f:
-                  first_line = f.readline().strip()
-              if not first_line.startswith('package '):
-                  first_line = 'package com.waiyan.burmesepodcast.burmese_podcast'
+                  fl = f.readline().strip()
+              if not fl.startswith('package '):
+                  fl = 'package com.waiyan.burmesepodcast.burmese_podcast'
               with open(mf, 'w') as f:
-                  f.write(first_line + "\n\n" + kt_body)
+                  f.write(fl + "\n\n" + kt)
 
-          def make_icon_png(sz):
+          def make_png(sz):
               raw = bytearray()
               for y in range(sz):
                   raw.append(0)
                   ny = (y + 0.5) / sz
                   for x in range(sz):
                       nx = (x + 0.5) / sz
-                      dx = nx - 0.5
-                      dy = ny - 0.5
-                      d = (dx * dx + dy * dy) ** 0.5
+                      dx, dy = nx - 0.5, ny - 0.5
+                      d = (dx*dx + dy*dy) ** 0.5
                       if d > 0.47:
                           raw.extend((0, 0, 0, 0))
                       elif d >= 0.43:
                           raw.extend((212, 175, 55, 255))
                       else:
-                          in_cap = (abs(dx) <= 0.08 and 0.27 <= ny <= 0.46) or ((dx * dx + (ny - 0.27) ** 2) <= 0.08 ** 2) or ((dx * dx + (ny - 0.46) ** 2) <= 0.08 ** 2)
-                          dc = (dx * dx + (ny - 0.45) ** 2) ** 0.5
-                          in_arc = (0.135 <= dc <= 0.168) and (ny >= 0.45)
-                          in_stem = (abs(dx) <= 0.02) and (0.60 <= ny <= 0.74)
-                          in_base = (abs(dx) <= 0.12) and (0.72 <= ny <= 0.76)
-                          if in_cap or in_arc or in_stem or in_base:
-                              raw.extend((212, 175, 55, 255))
-                          else:
-                              raw.extend((24, 24, 28, 255))
-
-              def chunk(tag, data):
-                  return struct.pack("!I", len(data)) + tag + data + struct.pack("!I", zlib.crc32(tag + data) & 0xffffffff)
-
-              ihdr = struct.pack("!IIBBBBB", sz, sz, 8, 6, 0, 0, 0)
-              return b"\x89PNG\r\n\x1a\n" + chunk(b"IHDR", ihdr) + chunk(b"IDAT", zlib.compress(bytes(raw), 9)) + chunk(b"IEND", b"")
+                          cap = (abs(dx) <= 0.08 and 0.27 <= ny <= 0.46) or ((dx*dx + (ny-0.27)**2) <= 0.0064) or ((dx*dx + (ny-0.46)**2) <= 0.0064)
+                          dc = (dx*dx + (ny-0.45)**2) ** 0.5
+                          arc = (0.135 <= dc <= 0.168) and (ny >= 0.45)
+                          stm = (abs(dx) <= 0.02) and (0.60 <= ny <= 0.74)
+                          bas = (abs(dx) <= 0.12) and (0.72 <= ny <= 0.76)
+                          raw.extend((212, 175, 55, 255) if (cap or arc or stm or bas) else (24, 24, 28, 255))
+              def chk(t, d):
+                  return struct.pack("!I", len(d)) + t + d + struct.pack("!I", zlib.crc32(t + d) & 0xffffffff)
+              return b"\x89PNG\r\n\x1a\n" + chk(b"IHDR", struct.pack("!IIBBBBB", sz, sz, 8, 6, 0, 0, 0)) + chk(b"IDAT", zlib.compress(bytes(raw), 9)) + chk(b"IEND", b"")
 
           sizes = {'mipmap-mdpi': 48, 'mipmap-hdpi': 72, 'mipmap-xhdpi': 96, 'mipmap-xxhdpi': 144, 'mipmap-xxxhdpi': 192}
-          res_base = 'android/app/src/main/res'
           for folder, sz in sizes.items():
-              p = os.path.join(res_base, folder)
+              p = os.path.join('android/app/src/main/res', folder)
               os.makedirs(p, exist_ok=True)
-              png_bytes = make_icon_png(sz)
-              for fname in ('ic_launcher.png', 'ic_launcher_round.png', 'wy_launcher.png'):
-                  with open(os.path.join(p, fname), 'wb') as f:
-                      f.write(png_bytes)
+              pb = make_png(sz)
+              for fn in ('ic_launcher.png', 'ic_launcher_round.png', 'wy_launcher.png'):
+                  with open(os.path.join(p, fn), 'wb') as f:
+                      f.write(pb)
           EOF
 
       - name: Accept Android Licenses
@@ -232,18 +206,17 @@ jobs:
         run: |
           mkdir -p output_apk
           cp build/app/outputs/flutter-apk/app-debug.apk output_apk/WY-Podcast.apk
-          ls -lh output_apk/
 
-      - name: Upload APK Artifact (Uncompressed ZIP)
+      - name: Upload APK Artifact
         uses: actions/upload-artifact@v4
         with:
           name: wys-podcast-apk
           path: output_apk/WY-Podcast.apk
           compression-level: 0
 
-      - name: Publish Direct APK to GitHub Releases (No ZIP Needed)
+      - name: Publish Direct APK to GitHub Releases
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           gh release delete latest --cleanup-tag --yes || true
-          gh release create latest output_apk/WY-Podcast.apk --title "WY's PODCAST APK" --notes "Zip ဖြည်စရာမလိုဘဲ WY-Podcast.apk ကို တိုက်ရိုက် ဒေါင်းလုဒ်ဆွဲ၍ သွင်းနိုင်ပါသည်။"
+          gh release create latest output_apk/WY-Podcast.apk --title "WY's PODCAST APK" --notes "WY-Podcast.apk ကို တိုက်ရိုက် ဒေါင်းလုဒ်ဆွဲနိုင်ပါပြီ။"
