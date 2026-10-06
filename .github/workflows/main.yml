@@ -38,10 +38,12 @@ jobs:
           printf "name: burmese_podcast\ndescription: WY Podcast\npublish_to: 'none'\nversion: 1.0.0+1\n\nenvironment:\n  sdk: '>=3.0.0 <4.0.0'\n\ndependencies:\n  flutter:\n    sdk: flutter\n\nflutter:\n  uses-material-design: true\n  assets:\n    - assets/models/ggml-tiny.bin\n" > pubspec.yaml
           flutter pub get
           flutter create . --platforms=android --org com.waiyan.burmesepodcast
+
           sed -i 's/android:label="burmese_podcast"/android:label="WY'\''s PODCAST"/g' android/app/src/main/AndroidManifest.xml
           sed -i 's/android:icon="@mipmap\/ic_launcher"/android:icon="@mipmap\/ic_launcher" android:roundIcon="@mipmap\/ic_launcher_round"/g' android/app/src/main/AndroidManifest.xml
           rm -rf android/app/src/main/res/mipmap-anydpi*
           rm -f android/app/src/main/res/drawable*/ic_launcher*
+
           python3 - << 'EOF'
           import os, glob
           from PIL import Image, ImageDraw
@@ -350,13 +352,13 @@ jobs:
       - name: Accept Android Licenses
         run: yes | flutter doctor --android-licenses || true
 
-      - name: Build Debug APK (ARM64)
-        run: flutter build apk --debug --target-platform android-arm64
+      - name: Build Universal Release APK
+        run: flutter build apk --release
 
       - name: Prepare Single APK
         run: |
           mkdir -p output_apk
-          cp build/app/outputs/flutter-apk/app-debug.apk output_apk/WY-Podcast.apk
+          cp build/app/outputs/flutter-apk/app-release.apk output_apk/WY-Podcast.apk
 
       - name: Upload APK Artifact
         uses: actions/upload-artifact@v4
@@ -370,5 +372,5 @@ jobs:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           gh release delete latest --cleanup-tag --yes || true
-          gh release create latest output_apk/WY-Podcast.apk --title "WY's PODCAST APK" --notes "WY-Podcast.apk ကို တိုက်ရိုက် ဒေါင်းလုဒ်ဆွဲနိုင်ပါပြီ။"
+          gh release create latest output_apk/WY-Podcast.apk --title "WY's PODCAST APK" --notes "WY-Podcast.apk ကို တိုက်ရိုက် ဒေါင်းလုဒ်ဆွဲ၍ သွင်းယူနိုင်ပါသည်။"
 # === END OF FILE ===
