@@ -70,8 +70,8 @@ class _PodcastStudioScreenState extends State<PodcastStudioScreen> {
 
   bool _useGem = false;
   String _gemMode = 'For Point';
-  String _style = 'Podcast (သဘာဝကျသော ဆွေးနွေးခန်းဟန်)';
-  String _voice = 'Male - Puck (သွက်လက်ဖော်ရွေသော အမျိုးသားသံ)';
+  String _style = 'Tutor (ပညာပေး ရှင်းပြသူ ဆရာဟန်)';
+  String _voice = 'Tutor - Bodi (Quiet & intimate · Low pitch)';
   double _speed = 1.0;
 
   bool _busyScript = false;
@@ -86,6 +86,7 @@ class _PodcastStudioScreenState extends State<PodcastStudioScreen> {
   Timer? _playerTimer;
 
   final List<String> _styles = [
+    'Tutor (ပညာပေး ရှင်းပြသူ ဆရာဟန်)',
     'Podcast (သဘာဝကျသော ဆွေးနွေးခန်းဟန်)',
     'Storytelling (ဇာတ်လမ်း/ဝတ္ထု ပြောပြဟန်)',
     'News / Broadcast (သတင်းကြေညာဟန်)',
@@ -94,13 +95,20 @@ class _PodcastStudioScreenState extends State<PodcastStudioScreen> {
   ];
 
   final List<String> _voices = [
+    'Tutor - Bodi (Quiet & intimate · Low pitch)',
+    'Tutor - Sadaltager (Knowledgeable · Middle pitch)',
+    'Tutor - Sulafat (Warm · Middle pitch)',
+    'Tutor - Lumi (Warm & approachable · Low pitch)',
+    'Tutor - Varo (Laid-back & chill · Low pitch)',
+    'Tutor - Sola (Gentle & relaxed · Very high pitch)',
+    'Tutor - Fola (Clear Tutor Voice)',
+    'Tutor - Zephyr (Bright · Higher pitch)',
     'Male - Puck (သွက်လက်ဖော်ရွေသော အမျိုးသားသံ)',
     'Male - Charon (တည်ကြည်ဩဇာရှိသော အမျိုးသားသံ)',
     'Male - Fenrir (တက်ကြွကြည်လင်သော အမျိုးသားသံ)',
     'Male - Orus (ပရော်ဖက်ရှင်နယ် အမျိုးသားသံ)',
     'Female - Kore (တည်ငြိမ်ကြည်လင်သော အမျိုးသမီးသံ)',
     'Female - Aoede (သဘာဝကျပြီး နွေးထွေးသော အမျိုးသမီးသံ)',
-    'Female - Zephyr (ကြည်လင်ချိုသာသော အမျိုးသမီးသံ)',
     'Female - Leda (နူးညံ့ပျိုမြစ်သော အမျိုးသမီးသံ)',
   ];
 
@@ -185,6 +193,105 @@ class _PodcastStudioScreenState extends State<PodcastStudioScreen> {
     ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(m)));
   }
 
+  void _showHelpDialog() {
+    showDialog(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        backgroundColor: const Color(0xFF1C1C1E),
+        title: Row(
+          children: const [
+            Icon(Icons.help_outline, color: goldAccent),
+            SizedBox(width: 8),
+            Expanded(
+              child: Text(
+                'Gemini API ရယူနည်း',
+                style: TextStyle(color: goldAccent, fontWeight: FontWeight.bold, fontSize: 18),
+              ),
+            ),
+          ],
+        ),
+        content: const SingleChildScrollView(
+          child: Text(
+            '⚠ အရေးကြီးသည်: မြန်မာနိုင်ငံမှ Google AI Studio သို့ ဝင်ရောက်စဉ် ဖုန်း၌ VPN ဖွင့်ထားပေးရန် လိုအပ်ပါသည်။\n\n'
+            '၁။ ဖုန်းတွင် VPN ဖွင့်ပြီး Browser ဖြင့် aistudio.google.com/app/apikey သို့ သွားပါ။\n\n'
+            '၂။ Google Account (Gmail) ဖြင့် Sign In ဝင်ပါ။\n\n'
+            '၃။ "Create API key" ကို နှိပ်ပြီး ရရှိလာသော AIzaSy... Key ကို Copy ကူးပါ။\n\n'
+            '၄။ App အပေါ်ညာဘက်ရှိ သော့ပုံ (Key Icon) ကို နှိပ်ပြီး Paste ချကာ Save နှိပ်ပါ။',
+            style: TextStyle(color: Colors.white, fontSize: 13.5, height: 1.5),
+          ),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () {
+              Clipboard.setData(const ClipboardData(text: 'https://aistudio.google.com/app/apikey'));
+              _snack('Link ကို Copy ကူးပြီးပါပြီ');
+            },
+            child: const Text('Link ကူးမည်', style: TextStyle(color: goldAccent, fontWeight: FontWeight.bold)),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.pop(ctx),
+            child: const Text('နားလည်ပါပြီ', style: TextStyle(color: Colors.black, fontWeight: FontWeight.bold)),
+          ),
+        ],
+      ),
+    );
+  }
+
+  void _showAboutDialog() {
+    showDialog(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        backgroundColor: const Color(0xFF1C1C1E),
+        title: const Text(
+          "WY's PODCAST (v1.0.0)",
+          style: TextStyle(color: goldAccent, fontWeight: FontWeight.bold, fontSize: 19),
+        ),
+        content: SingleChildScrollView(
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              const Text(
+                'ရည်ရွယ်ချက် (Vision):',
+                style: TextStyle(color: goldAccent, fontWeight: FontWeight.bold, fontSize: 14.5),
+              ),
+              const SizedBox(height: 8),
+              const Text(
+                'ဘာသာစကား အခက်အခဲကြောင့် ခေတ်မီနည်းပညာများနှင့် အသိပညာဗဟုသုတများ ရယူရာတွင် အဟန့်အတား မဖြစ်စေရန် မည်သူမဆို AI နည်းပညာကို လက်တွေ့အသုံးချပြီး နိုင်ငံတကာမှ အကြောင်းအရာများကို မြန်မာဘာသာဖြင့် လေ့လာဖန်တီးနိုင်သော Podcast စနစ်အဖြစ် တည်ဆောက်ထားပါသည်။',
+                style: TextStyle(color: Colors.white, fontSize: 13.5, height: 1.5),
+              ),
+              const SizedBox(height: 14),
+              const Divider(color: Colors.white24),
+              const SizedBox(height: 8),
+              InkWell(
+                onTap: () {
+                  Clipboard.setData(const ClipboardData(text: '@seniorwaiyan'));
+                  _snack('Telegram @seniorwaiyan ကို Copy ကူးပြီးပါပြီ');
+                },
+                child: Row(
+                  children: const [
+                    Icon(Icons.send, color: goldAccent, size: 16),
+                    SizedBox(width: 8),
+                    Text(
+                      'Telegram: @seniorwaiyan',
+                      style: TextStyle(color: goldAccent, fontWeight: FontWeight.bold, fontSize: 14),
+                    ),
+                  ],
+                ),
+              ),
+            ],
+          ),
+        ),
+        actions: [
+          FilledButton(
+            onPressed: () => Navigator.pop(ctx),
+            child: const Text('ပိတ်မည်', style: TextStyle(color: Colors.black, fontWeight: FontWeight.bold)),
+          ),
+        ],
+      ),
+    );
+  }
+
   void _apiDialog() {
     final c = TextEditingController(text: _apiKey);
     showDialog(
@@ -206,6 +313,15 @@ class _PodcastStudioScreenState extends State<PodcastStudioScreen> {
           ),
         ),
         actions: [
+          if (_apiKey.isNotEmpty)
+            TextButton(
+              onPressed: () async {
+                await _saveCfg(key: '');
+                if (mounted) Navigator.pop(ctx);
+                _snack('API Key ဖျက်ပြီးပါပြီ');
+              },
+              child: const Text('ဖျက်မည်', style: TextStyle(color: Colors.redAccent)),
+            ),
           TextButton(onPressed: () => Navigator.pop(ctx), child: const Text('ပိတ်မည်')),
           FilledButton(
             onPressed: () async {
@@ -213,7 +329,7 @@ class _PodcastStudioScreenState extends State<PodcastStudioScreen> {
               if (mounted) Navigator.pop(ctx);
               _snack('API Key ကို အမြဲတမ်း သိမ်းဆည်းပြီးပါပြီ');
             },
-            child: const Text('Save သိမ်းမည်'),
+            child: const Text('Save သိမ်းမည်', style: TextStyle(color: Colors.black, fontWeight: FontWeight.bold)),
           ),
         ],
       ),
@@ -228,35 +344,137 @@ class _PodcastStudioScreenState extends State<PodcastStudioScreen> {
     }
   }
 
+  String? _tryExtractDocxOrZipXml(Uint8List bytes) {
+    try {
+      int i = 0;
+      final texts = <String>[];
+      while (i + 30 < bytes.length) {
+        if (bytes[i] == 0x50 && bytes[i + 1] == 0x4B && bytes[i + 2] == 0x03 && bytes[i + 3] == 0x04) {
+          final method = bytes[i + 8] | (bytes[i + 9] << 8);
+          final compSize = bytes[i + 18] | (bytes[i + 19] << 8) | (bytes[i + 20] << 16) | (bytes[i + 21] << 24);
+          final nameLen = bytes[i + 26] | (bytes[i + 27] << 8);
+          final extraLen = bytes[i + 28] | (bytes[i + 29] << 8);
+          final nameStart = i + 30;
+          final dataStart = nameStart + nameLen + extraLen;
+          if (dataStart > bytes.length) break;
+          final entryName = utf8.decode(bytes.sublist(nameStart, nameStart + nameLen), allowMalformed: true);
+          if (compSize > 0 && dataStart + compSize <= bytes.length) {
+            if (entryName.endsWith('.xml') || entryName.endsWith('.txt') || entryName.endsWith('.html')) {
+              final compData = bytes.sublist(dataStart, dataStart + compSize);
+              List<int> rawEntry;
+              if (method == 0) {
+                rawEntry = compData;
+              } else {
+                rawEntry = ZLibDecoder(raw: true).convert(compData);
+              }
+              if (entryName.contains('document.xml') || !entryName.endsWith('.xml')) {
+                final xmlStr = utf8.decode(rawEntry, allowMalformed: true);
+                final cleaned = xmlStr
+                    .replaceAll('</w:p>', '\n')
+                    .replaceAll('<w:br/>', '\n')
+                    .replaceAll(RegExp(r'<[^>]+>'), '');
+                if (cleaned.trim().isNotEmpty) texts.add(cleaned.trim());
+              }
+            }
+            i = dataStart + compSize;
+            continue;
+          }
+        }
+        i++;
+      }
+      if (texts.isNotEmpty) return texts.join('\n\n');
+    } catch (_) {}
+    return null;
+  }
+
+  String _cleanTextFormatting(String raw) {
+    var s = raw;
+    if (s.contains(r'\u10') || s.contains(r'\u00')) {
+      s = s.replaceAllMapped(RegExp(r'\\u([0-9a-fA-F]{4})'), (m) {
+        return String.fromCharCode(int.parse(m.group(1)!, radix: 16));
+      });
+    }
+    if (s.contains('&#')) {
+      s = s.replaceAllMapped(RegExp(r'&#(\d+);'), (m) {
+        return String.fromCharCode(int.parse(m.group(1)!));
+      });
+      s = s.replaceAllMapped(RegExp(r'&#x([0-9a-fA-F]+);'), (m) {
+        return String.fromCharCode(int.parse(m.group(1)!, radix: 16));
+      });
+    }
+    if (s.contains('<html') || s.contains('<!DOCTYPE') || s.contains('<body') || s.contains('<div') || s.contains('<p>')) {
+      s = s
+          .replaceAll(RegExp(r'<script[\s\S]*?</script>', caseSensitive: false), '')
+          .replaceAll(RegExp(r'<style[\s\S]*?</style>', caseSensitive: false), '')
+          .replaceAll(RegExp(r'</(p|div|br|li|tr|h[1-6])>', caseSensitive: false), '\n')
+          .replaceAll(RegExp(r'<[^>]+>'), '')
+          .replaceAll('&nbsp;', ' ')
+          .replaceAll('&amp;', '&')
+          .replaceAll('&lt;', '<')
+          .replaceAll('&gt;', '>')
+          .replaceAll('&quot;', '"');
+    }
+    return s.trim();
+  }
+
   String _decodeBytesSmart(Uint8List bytes) {
     if (bytes.isEmpty) return '';
+    if (bytes.length >= 4 && bytes[0] == 0x50 && bytes[1] == 0x4B && bytes[2] == 0x03 && bytes[3] == 0x04) {
+      final docxText = _tryExtractDocxOrZipXml(bytes);
+      if (docxText != null && docxText.isNotEmpty) return _cleanTextFormatting(docxText);
+    }
     if (bytes.length >= 3 && bytes[0] == 0xEF && bytes[1] == 0xBB && bytes[2] == 0xBF) {
-      return utf8.decode(bytes.sublist(3), allowMalformed: true);
+      return _cleanTextFormatting(utf8.decode(bytes.sublist(3), allowMalformed: true));
     }
     if (bytes.length >= 2 && bytes[0] == 0xFF && bytes[1] == 0xFE) {
       final codes = <int>[];
       for (int i = 2; i + 1 < bytes.length; i += 2) {
         codes.add(bytes[i] | (bytes[i + 1] << 8));
       }
-      return String.fromCharCodes(codes);
+      return _cleanTextFormatting(String.fromCharCodes(codes));
     }
     if (bytes.length >= 2 && bytes[0] == 0xFE && bytes[1] == 0xFF) {
       final codes = <int>[];
       for (int i = 2; i + 1 < bytes.length; i += 2) {
         codes.add((bytes[i] << 8) | bytes[i + 1]);
       }
-      return String.fromCharCodes(codes);
+      return _cleanTextFormatting(String.fromCharCodes(codes));
     }
-    return utf8.decode(bytes, allowMalformed: true);
+
+    int samplePairs = (bytes.length ~/ 2).clamp(0, 200);
+    if (samplePairs > 4) {
+      int odd High10or00 = 0;
+      int evenHigh10or00 = 0;
+      for (int i = 0; i < samplePairs * 2; i += 2) {
+        if (bytes[i + 1] == 0x10 || bytes[i + 1] == 0x00) oddHigh10or00++;
+        if (bytes[i] == 0x10 || bytes[i] == 0x00) evenHigh10or00++;
+      }
+      if (oddHigh10or00 > samplePairs * 0.35) {
+        final codes = <int>[];
+        for (int i = 0; i + 1 < bytes.length; i += 2) {
+          codes.add(bytes[i] | (bytes[i + 1] << 8));
+        }
+        return _cleanTextFormatting(String.fromCharCodes(codes));
+      }
+      if (evenHigh10or00 > samplePairs * 0.35) {
+        final codes = <int>[];
+        for (int i = 0; i + 1 < bytes.length; i += 2) {
+          codes.add((bytes[i] << 8) | bytes[i + 1]);
+        }
+        return _cleanTextFormatting(String.fromCharCodes(codes));
+      }
+    }
+
+    return _cleanTextFormatting(utf8.decode(bytes, allowMalformed: true));
   }
 
   Future<void> _pickTxtFile() async {
     try {
-      final res = await _channel.invokeMethod('pickFile', {'mimeType': 'text/*'});
+      final res = await _channel.invokeMethod('pickFile', {'mimeType': '*/*'});
       if (res is Map && res['path'] != null) {
         final f = File(res['path'].toString());
         final rawBytes = await f.readAsBytes();
-        final textContent = _decodeBytesSmart(rawBytes).trim();
+        final textContent = _decodeBytesSmart(rawBytes);
         setState(() => _inputCtrl.text = textContent);
         _snack('ဖိုင် (${res['name']}) မှ စာသားများ ထည့်သွင်းပြီးပါပြီ');
       }
@@ -317,8 +535,9 @@ class _PodcastStudioScreenState extends State<PodcastStudioScreen> {
     String sysPrompt,
     List<Map<String, dynamic>> history,
   ) async {
-    const models = ['gemini-2.5-flash', 'gemini-2.0-flash', 'gemini-1.5-flash'];
-    String lastErr = '';
+    final models = <String>['gemini-2.5-flash', 'gemini-2.0-flash', 'gemini-flash-latest'];
+    String firstRealErr = '';
+
     for (final m in models) {
       try {
         final req = await client.postUrl(Uri.parse(
@@ -332,21 +551,40 @@ class _PodcastStudioScreenState extends State<PodcastStudioScreen> {
             ]
           },
           'contents': history,
+          'safetySettings': [
+            {'category': 'HARM_CATEGORY_HARASSMENT', 'threshold': 'BLOCK_NONE'},
+            {'category': 'HARM_CATEGORY_HATE_SPEECH', 'threshold': 'BLOCK_NONE'},
+            {'category': 'HARM_CATEGORY_SEXUALLY_EXPLICIT', 'threshold': 'BLOCK_NONE'},
+            {'category': 'HARM_CATEGORY_DANGEROUS_CONTENT', 'threshold': 'BLOCK_NONE'},
+          ],
           'generationConfig': {'temperature': 0.4},
         })));
         final resp = await req.close();
         final body = await resp.transform(utf8.decoder).join();
         if (resp.statusCode == 200) {
           final j = jsonDecode(body);
-          final txt = (j['candidates']?[0]?['content']?['parts']?[0]?['text'] ?? '').toString();
-          if (txt.isNotEmpty) return txt;
+          final candidates = j['candidates'] as List?;
+          if (candidates != null && candidates.isNotEmpty) {
+            final parts = candidates[0]['content']?['parts'] as List?;
+            if (parts != null && parts.isNotEmpty) {
+              final sb = StringBuffer();
+              for (final pt in parts) {
+                if (pt['text'] != null) sb.write(pt['text']);
+              }
+              final txt = sb.toString().trim();
+              if (txt.isNotEmpty) return txt;
+            }
+            final reason = candidates[0]['finishReason'] ?? 'UNKNOWN';
+            if (firstRealErr.isEmpty) firstRealErr = 'Model ($m) blocked response: $reason';
+          }
+        } else if (resp.statusCode != 404) {
+          if (firstRealErr.isEmpty) firstRealErr = '($m HTTP ${resp.statusCode}): $body';
         }
-        lastErr = '($m HTTP ${resp.statusCode}): $body';
       } catch (e) {
-        lastErr = e.toString();
+        if (firstRealErr.isEmpty) firstRealErr = e.toString();
       }
     }
-    throw Exception('Gemini Script Error: $lastErr');
+    throw Exception(firstRealErr.isNotEmpty ? firstRealErr : 'Gemini API ချိတ်ဆက်၍ မရပါ။ VPN နှင့် API Key ကို စစ်ဆေးပါ။');
   }
 
   Future<String> _transformScript(String src) async {
@@ -449,11 +687,31 @@ class _PodcastStudioScreenState extends State<PodcastStudioScreen> {
     return b.toBytes();
   }
 
-  Future<Uint8List> _geminiTtsMerged(String script) async {
-    String vName = 'Puck';
-    for (final n in ['Puck', 'Charon', 'Fenrir', 'Orus', 'Kore', 'Aoede', 'Zephyr', 'Leda']) {
-      if (_voice.contains(n)) vName = n;
+  String _extractSelectedVoiceName() {
+    for (final n in [
+      'Bodi',
+      'Sadaltager',
+      'Sulafat',
+      'Lumi',
+      'Varo',
+      'Sola',
+      'Fola',
+      'Zephyr',
+      'Puck',
+      'Charon',
+      'Fenrir',
+      'Orus',
+      'Kore',
+      'Aoede',
+      'Leda',
+    ]) {
+      if (_voice.contains(n)) return n;
     }
+    return 'Bodi';
+  }
+
+  Future<Uint8List> _geminiTtsMerged(String script) async {
+    String vName = _extractSelectedVoiceName();
     final chunks = _chunkText(script, 3200);
     final pcmBuilder = BytesBuilder(copy: false);
     final client = HttpClient();
@@ -493,6 +751,11 @@ class _PodcastStudioScreenState extends State<PodcastStudioScreen> {
             retries++;
             if (mounted) setState(() => _status = 'Rate Limit ခေတ္တစောင့်နေသည် (15s)...');
             await Future.delayed(const Duration(seconds: 15));
+            continue;
+          }
+          if (resp.statusCode != 200 && vName != 'Puck' && retries == 0) {
+            retries++;
+            vName = 'Charon';
             continue;
           }
           if (resp.statusCode != 200) {
@@ -607,7 +870,18 @@ class _PodcastStudioScreenState extends State<PodcastStudioScreen> {
         backgroundColor: darkBg,
         actions: [
           IconButton(
+            icon: const Icon(Icons.help_outline, color: goldAccent),
+            tooltip: 'Gemini API ရယူနည်း',
+            onPressed: _showHelpDialog,
+          ),
+          IconButton(
+            icon: const Icon(Icons.info_outline, color: goldAccent),
+            tooltip: 'About WY\'s PODCAST',
+            onPressed: _showAboutDialog,
+          ),
+          IconButton(
             icon: Icon(Icons.vpn_key, color: _apiKey.isNotEmpty ? goldAccent : Colors.white70),
+            tooltip: 'API Key သိမ်းဆည်းရန်',
             onPressed: _apiDialog,
           ),
         ],
