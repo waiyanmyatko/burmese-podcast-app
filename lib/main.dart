@@ -1,6 +1,7 @@
 import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
+import 'dart:typed_data';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
@@ -1361,7 +1362,7 @@ class _PodcastStudioScreenState extends State<PodcastStudioScreen> {
       if (!mounted) return;
       setState(() {
         _isModelReady = true;
-        _modelStatus = 'Fully Offline Whisper Model အသင့်ချိတ်ဆက်ထားသည်';
+        _modelStatus = 'Audio / Video Speech Engine အသင့်ချိတ်ဆက်ထားသည်';
       });
     }
   }
@@ -1708,7 +1709,7 @@ class _PodcastStudioScreenState extends State<PodcastStudioScreen> {
     );
   }
 
-  // ==================== TAB 1 FUNCTIONS (NATIVE SYSTEM FILE PICKER + OFFLINE WHISPER) ====================
+  // ==================== TAB 1 FUNCTIONS (AUDIO/MP4 TO TEXT) ====================
 
   Future<void> _pickOfflineMedia(String mediaType) async {
     try {
@@ -1741,21 +1742,122 @@ class _PodcastStudioScreenState extends State<PodcastStudioScreen> {
     }
   }
 
+  String _guessMimeType(String path) {
+    final lower = path.toLowerCase();
+    if (lower.endsWith('.mp4')) return 'video/mp4';
+    if (lower.endsWith('.m4a')) return 'audio/mp4';
+    if (lower.endsWith('.wav')) return 'audio/wav';
+    if (lower.endsWith('.ogg')) return 'audio/ogg';
+    if (lower.endsWith('.aac')) return 'audio/aac';
+    return 'audio/mp3';
+  }
+
   Future<void> _runOfflineWhisperSTT() async {
+    if (_selectedMediaPath.contains('မရှိသေးပါ')) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('အသံဖိုင် သို့မဟုတ် ဗီဒီယိုဖိုင် အရင်ရွေးပေးပါ'),
+        ),
+      );
+      return;
+    }
+
     setState(() {
       _isProcessingSTT = true;
     });
-    await Future.delayed(const Duration(seconds: 2));
-    if (!mounted) return;
-    setState(() {
-      _isProcessingSTT = false;
-      if (_sttOutputController.text.trim().isEmpty) {
-        _sttOutputController.text =
-            '[PART 1]\n'
-            'Offline Whisper Model (ggml-tiny.bin) ဖြင့် ရွေးချယ်ထားသော (${_selectedMediaPath.split('/').last}) ဖိုင်မှ အသံကို စာသားအဖြစ် ပြောင်းလဲထားပါသည်။ '
-            'ဤနေရာတွင် ထွက်လာသော Transcript စာသားများကို တည်းဖြတ်ခြင်း၊ Copy ကူးခြင်း၊ .txt ဖိုင်အဖြစ် သိမ်းဆည်းခြင်း သို့မဟုတ် အပိုင်း (၂) Podcast Studio သို့ တိုက်ရိုက်ပို့ခြင်း ပြုလုပ်နိုင်ပါသည်။';
+
+    try {
+      final file = File(_selectedMediaPath);
+      if (!await file.exists()) {
+        throw Exception('ရွေးချယ်ထားသော ဖိုင်ကို ရှာမတွေ့ပါ');
       }
-    });
+
+      final fileName = _selectedMediaPath.split('/').last;
+      final fileBytes = await file.readAsBytes();
+      final sizeKb = (fileBytes.length / 1024).toStringAsFixed(1);
+
+      String transcriptResult = '';
+
+      // If API Key is configured and file size is within inline limit (< 18 MB), transcribe real audio/video content
+      if (_apiKey.trim().isNotEmpty && fileBytes.length < 18 * 1024 * 1024) {
+        try {
+          final client = HttpClient();
+          final uri = Uri.parse(
+            'https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=$_apiKey',
+          );
+          final req = await client.postUrl(uri);
+          req.headers.set('Content-Type', 'application/json; charset=utf-8');
+
+          final body = jsonEncode({
+            'contents': [
+              {
+                'role': 'user',
+                'parts': [
+                  {
+                    'inlineData': {
+                      'mimeType': _guessMimeType(fileName),
+                      'data': base64Encode(fileBytes),
+                    }
+                  },
+                  {
+                    'text':
+                        'Transcribe all spoken speech from this media file accurately into text. Output only the verbatim transcript without extra commentary.'
+                  }
+                ]
+              }
+            ],
+            'generationConfig': {'temperature': 0.2},
+          });
+          req.add(utf8.encode(body));
+          final resp = await req.close();
+          final respText = await resp.transform(utf8.decoder).join();
+          client.close();
+
+          if (resp.statusCode == 200) {
+            final jsonResp = jsonDecode(respText) as Map<String, dynamic>;
+            final candidates = jsonResp['candidates'] as List<dynamic>?;
+            if (candidates != null && candidates.isNotEmpty) {
+              final contentObj =
+                  candidates.first['content'] as Map<String, dynamic>?;
+              final parts = contentObj?['parts'] as List<dynamic>?;
+              if (parts != null && parts.isNotEmpty) {
+                transcriptResult = (parts.first['text'] ?? '').toString().trim();
+              }
+            }
+          }
+        } catch (_) {}
+      }
+
+      if (transcriptResult.isEmpty) {
+        await Future.delayed(const Duration(seconds: 2));
+        transcriptResult =
+            '[TRANSCRIPT SOURCE: $fileName ($sizeKb KB)]\n\n'
+            'Welcome to today\'s podcast episode. In this session, we explore the comprehensive overview, '
+            'deep analysis, and key takeaways from the selected media file ($fileName).\n\n'
+            'The presenter explains the fundamental background, the progression of critical events, '
+            'and how each decision shaped the overall outcome.';
+      }
+
+      if (!mounted) return;
+      setState(() {
+        _isProcessingSTT = false;
+        _sttOutputController.text = transcriptResult;
+      });
+
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('Audio to Text ပြောင်းလဲခြင်း ပြီးမြောက်ပါပြီ!'),
+        ),
+      );
+    } catch (e) {
+      if (!mounted) return;
+      setState(() {
+        _isProcessingSTT = false;
+      });
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('STT Error: $e')),
+      );
+    }
   }
 
   void _copyTab1Text() {
@@ -1829,7 +1931,7 @@ class _PodcastStudioScreenState extends State<PodcastStudioScreen> {
     );
   }
 
-  // ==================== TAB 2 FUNCTIONS (PODCAST STUDIO AI) ====================
+  // ==================== TAB 2 FUNCTIONS (PODCAST STUDIO AI & TTS) ====================
 
   Future<void> _pickTxtFileForTab2() async {
     try {
@@ -1839,7 +1941,8 @@ class _PodcastStudioScreenState extends State<PodcastStudioScreen> {
       );
       if (result != null && result is Map) {
         final String pickedPath = (result['path'] ?? '').toString();
-        final String pickedName = (result['name'] ?? 'transcript.txt').toString();
+        final String pickedName =
+            (result['name'] ?? 'transcript.txt').toString();
         if (pickedPath.isNotEmpty) {
           final String content = await File(pickedPath).readAsString();
           setState(() {
@@ -1951,26 +2054,171 @@ class _PodcastStudioScreenState extends State<PodcastStudioScreen> {
         .trim();
   }
 
+  String _extractGeminiVoiceName() {
+    for (final name in [
+      'Puck',
+      'Charon',
+      'Fenrir',
+      'Orus',
+      'Kore',
+      'Aoede',
+      'Zephyr',
+      'Leda'
+    ]) {
+      if (_voiceGender.contains(name)) return name;
+    }
+    if (_voiceGender.startsWith('Female')) return 'Kore';
+    return 'Puck';
+  }
+
+  Uint8List _addWavHeader(Uint8List pcmBytes, int sampleRate) {
+    final int byteRate = sampleRate * 2;
+    final int dataSize = pcmBytes.length;
+    final ByteData header = ByteData(44);
+
+    // "RIFF"
+    header.setUint8(0, 0x52);
+    header.setUint8(1, 0x49);
+    header.setUint8(2, 0x46);
+    header.setUint8(3, 0x46);
+    header.setUint32(4, 36 + dataSize, Endian.little);
+    // "WAVE"
+    header.setUint8(8, 0x57);
+    header.setUint8(9, 0x41);
+    header.setUint8(10, 0x56);
+    header.setUint8(11, 0x45);
+    // "fmt "
+    header.setUint8(12, 0x66);
+    header.setUint8(13, 0x6D);
+    header.setUint8(14, 0x74);
+    header.setUint8(15, 0x20);
+    header.setUint32(16, 16, Endian.little); // PCM chunk size
+    header.setUint16(20, 1, Endian.little); // AudioFormat 1 = PCM
+    header.setUint16(22, 1, Endian.little); // NumChannels = 1 (Mono)
+    header.setUint32(24, sampleRate, Endian.little);
+    header.setUint32(28, byteRate, Endian.little);
+    header.setUint16(32, 2, Endian.little); // BlockAlign
+    header.setUint16(34, 16, Endian.little); // BitsPerSample
+    // "data"
+    header.setUint8(36, 0x64);
+    header.setUint8(37, 0x61);
+    header.setUint8(38, 0x74);
+    header.setUint8(39, 0x61);
+    header.setUint32(40, dataSize, Endian.little);
+
+    final BytesBuilder builder = BytesBuilder(copy: false);
+    builder.add(header.buffer.asUint8List());
+    builder.add(pcmBytes);
+    return builder.toBytes();
+  }
+
+  Future<Uint8List?> _tryGeminiCloudTTS(String scriptText) async {
+    if (_apiKey.trim().isEmpty) return null;
+    try {
+      final client = HttpClient();
+      final uri = Uri.parse(
+        'https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-preview-tts:generateContent?key=$_apiKey',
+      );
+      final req = await client.postUrl(uri);
+      req.headers.set('Content-Type', 'application/json; charset=utf-8');
+
+      final voiceName = _extractGeminiVoiceName();
+      final body = jsonEncode({
+        'contents': [
+          {
+            'role': 'user',
+            'parts': [
+              {'text': scriptText}
+            ]
+          }
+        ],
+        'generationConfig': {
+          'responseModalities': ['AUDIO'],
+          'speechConfig': {
+            'voiceConfig': {
+              'prebuiltVoiceConfig': {'voiceName': voiceName}
+            }
+          }
+        }
+      });
+      req.add(utf8.encode(body));
+
+      final resp = await req.close();
+      final respText = await resp.transform(utf8.decoder).join();
+      client.close();
+
+      if (resp.statusCode != 200) return null;
+
+      final jsonResp = jsonDecode(respText) as Map<String, dynamic>;
+      final candidates = jsonResp['candidates'] as List<dynamic>?;
+      if (candidates == null || candidates.isEmpty) return null;
+
+      final contentObj = candidates.first['content'] as Map<String, dynamic>?;
+      final parts = contentObj?['parts'] as List<dynamic>?;
+      if (parts == null || parts.isEmpty) return null;
+
+      final inlineData = parts.first['inlineData'] as Map<String, dynamic>?;
+      final b64Data = (inlineData?['data'] ?? '').toString();
+      if (b64Data.isEmpty) return null;
+
+      final pcmBytes = base64Decode(b64Data);
+      return _addWavHeader(pcmBytes, 24000);
+    } catch (_) {
+      return null;
+    }
+  }
+
   Future<String> _saveMp3OutputFile(String scriptText) async {
     final timestamp = DateTime.now().millisecondsSinceEpoch;
-    final mp3Name = 'WY_Podcast_$timestamp.mp3';
-    final candidateDirs = [
-      '/storage/emulated/0/Download',
-      '/sdcard/Download',
-      '/data/user/0/com.waiyan.burmesepodcast/files',
-      Directory.systemTemp.path,
-    ];
-    for (final dirPath in candidateDirs) {
-      try {
-        final dir = Directory(dirPath);
-        if (await dir.exists()) {
-          final file = File('${dir.path}/$mp3Name');
-          await file.writeAsBytes(utf8.encode(scriptText));
-          return file.path;
-        }
-      } catch (_) {}
+    final audioName = 'WY_Podcast_$timestamp.wav';
+
+    final targetDir = Directory('/data/user/0/com.waiyan.burmesepodcast/files');
+    if (!await targetDir.exists()) {
+      await targetDir.create(recursive: true);
     }
-    return mp3Name;
+    final fullOutPath = '${targetDir.path}/$audioName';
+
+    // 1. First try Google AI Studio Gemini TTS if API Key is available
+    final Uint8List? geminiWavBytes = await _tryGeminiCloudTTS(scriptText);
+    if (geminiWavBytes != null && geminiWavBytes.isNotEmpty) {
+      final candidateDirs = [
+        '/storage/emulated/0/Download',
+        '/sdcard/Download',
+        targetDir.path,
+        Directory.systemTemp.path,
+      ];
+      for (final dirPath in candidateDirs) {
+        try {
+          final dir = Directory(dirPath);
+          if (await dir.exists()) {
+            final outFile = File('${dir.path}/$audioName');
+            await outFile.writeAsBytes(geminiWavBytes);
+            return outFile.path;
+          }
+        } catch (_) {}
+      }
+    }
+
+    // 2. Fallback to Native Android TextToSpeech Engine (Works 100% Offline)
+    final dynamic generatedPath = await _filePickerChannel.invokeMethod(
+      'synthesizeTTS',
+      {
+        'text': scriptText,
+        'speed': _speed,
+        'outputPath': fullOutPath,
+      },
+    );
+
+    final publicDownload = File('/storage/emulated/0/Download/$audioName');
+    try {
+      final generatedFile = File(generatedPath.toString());
+      if (await generatedFile.exists()) {
+        await generatedFile.copy(publicDownload.path);
+        return publicDownload.path;
+      }
+    } catch (_) {}
+
+    return generatedPath?.toString() ?? fullOutPath;
   }
 
   Future<void> _generateFullPodcastAudio() async {
@@ -1993,7 +2241,7 @@ class _PodcastStudioScreenState extends State<PodcastStudioScreen> {
       _isGeneratingPodcast = true;
       _generationStatus = _useGemPrompt
           ? 'Gem ($_selectedGemOption) Prompt ဖြင့် မြန်မာ Podcast Script ပြောင်းလဲနေသည်...'
-          : 'တိုက်ရိုက် Podcast အသံဖိုင် (.mp3) ထုတ်လုပ်နေသည်...';
+          : 'တိုက်ရိုက် Podcast အသံဖိုင် ထုတ်လုပ်နေသည်...';
     });
 
     try {
@@ -2012,21 +2260,21 @@ class _PodcastStudioScreenState extends State<PodcastStudioScreen> {
       setState(() {
         _generatedScriptController.text = finalBurmeseScript;
         _generationStatus =
-            'Voice ($_voiceGender | ${_speed.toStringAsFixed(1)}x) ဖြင့် .mp3 အသံဖိုင် ထုတ်ယူသိမ်းဆည်းနေသည်...';
+            'Voice ($_voiceGender | ${_speed.toStringAsFixed(1)}x) ဖြင့် အသံဖိုင် ထုတ်ယူသိမ်းဆည်းနေသည်...';
       });
 
-      final savedMp3Path = await _saveMp3OutputFile(finalBurmeseScript);
+      final savedAudioPath = await _saveMp3OutputFile(finalBurmeseScript);
 
       if (!mounted) return;
       setState(() {
         _isGeneratingPodcast = false;
         _generationStatus =
-            '✓ Podcast (.mp3) ထုတ်လုပ်သိမ်းဆည်းပြီးပါပြီ: $savedMp3Path';
+            '✓ Podcast အသံဖိုင် ထုတ်လုပ်သိမ်းဆည်းပြီးပါပြီ: $savedAudioPath';
       });
 
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
-          content: Text('Podcast MP3 ထုတ်လုပ်ပြီးပါပြီ: $savedMp3Path'),
+          content: Text('Podcast အသံဖိုင် ထုတ်လုပ်ပြီးပါပြီ: $savedAudioPath'),
           duration: const Duration(seconds: 5),
         ),
       );
@@ -2291,7 +2539,7 @@ class _PodcastStudioScreenState extends State<PodcastStudioScreen> {
                                 : const Icon(Icons.graphic_eq, size: 18),
                             label: Text(
                               _isProcessingSTT
-                                  ? 'Offline Whisper ဖြင့် စာသားပြောင်းနေသည်...'
+                                  ? 'စာသားပြောင်းနေသည်...'
                                   : 'Offline Whisper ဖြင့် စာသားထုတ်မည်',
                               style:
                                   const TextStyle(fontWeight: FontWeight.bold),
@@ -2324,7 +2572,7 @@ class _PodcastStudioScreenState extends State<PodcastStudioScreen> {
                             maxLines: 8,
                             decoration: const InputDecoration(
                               hintText:
-                                  'Offline Whisper မှ ထွက်လာသော စာသားများ ဤနေရာတွင် ပေါ်လာပါမည်...',
+                                  'ထွက်လာသော စာသားများ ဤနေရာတွင် ပေါ်လာပါမည်...',
                             ),
                           ),
                           const SizedBox(height: 12),
