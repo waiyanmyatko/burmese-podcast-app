@@ -28,61 +28,32 @@ jobs:
           channel: 'stable'
           cache: true
 
-      - name: Prepare Project, Native Speech & TTS Engines, and WY Gold App Icon
+      - name: Prepare Clean Project, Native File Picker, TTS Engine, and App Icon
         run: |
+          mkdir -p assets/models
           rm -rf android test pubspec.lock
-          cat << 'EOF' > pubspec.yaml
-name: burmese_podcast
-description: WY Podcast Studio
-publish_to: 'none'
-version: 1.0.0+1
-
-environment:
-  sdk: '>=3.0.0 <4.0.0'
-
-dependencies:
-  flutter:
-    sdk: flutter
-
-flutter:
-  uses-material-design: true
-EOF
-
+          printf "name: burmese_podcast\ndescription: WY Podcast Studio\npublish_to: 'none'\nversion: 1.0.0+1\n\nenvironment:\n  sdk: '>=3.0.0 <4.0.0'\n\ndependencies:\n  flutter:\n    sdk: flutter\n\nflutter:\n  uses-material-design: true\n" > pubspec.yaml
           flutter pub get
           flutter create . --platforms=android --org com.waiyan.burmesepodcast
-
-          # Update Android Manifest (App Name, Icons & TTS Queries)
           sed -i 's/android:label="burmese_podcast"/android:label="WY'\''s PODCAST"/g' android/app/src/main/AndroidManifest.xml
           sed -i 's/android:icon="@mipmap\/ic_launcher"/android:icon="@mipmap\/wy_launcher" android:roundIcon="@mipmap\/wy_launcher"/g' android/app/src/main/AndroidManifest.xml
-          
-          # Insert Storage Permissions and TTS Intent Query into AndroidManifest.xml
-          python3 - << 'EOF'
-          with open('android/app/src/main/AndroidManifest.xml', 'r') as f:
-              content = f.read()
-          
-          queries = """
-              <queries>
-                  <intent>
-                      <action android:name="android.intent.action.TTS_SERVICE" />
-                  </intent>
-              </queries>
-              <uses-permission android:name="android.permission.READ_EXTERNAL_STORAGE" />
-              <uses-permission android:name="android.permission.WRITE_EXTERNAL_STORAGE" />
-          """
-          content = content.replace('<application', queries + '\n    <application')
-          with open('android/app/src/main/AndroidManifest.xml', 'w') as f:
-              f.write(content)
-          EOF
-
           rm -rf android/app/src/main/res/mipmap-anydpi*
           rm -f android/app/src/main/res/drawable*/ic_launcher*
           pip install pillow
-
-          # Generate Native Android Kotlin Engine (File Picker + Native Android TTS with SynthesizeToFile)
           python3 - << 'EOF'
-          import glob
+          import os, glob
+          from PIL import Image, ImageDraw
 
-          kt_code = """import android.app.Activity
+          manifest_path = 'android/app/src/main/AndroidManifest.xml'
+          if os.path.exists(manifest_path):
+              with open(manifest_path, 'r') as f:
+                  m_content = f.read()
+              extra_manifest = '<queries><intent><action android:name="android.intent.action.TTS_SERVICE" /></intent></queries>\n    <uses-permission android:name="android.permission.READ_EXTERNAL_STORAGE" />\n    <uses-permission android:name="android.permission.WRITE_EXTERNAL_STORAGE" />\n    <application'
+              m_content = m_content.replace('<application', extra_manifest, 1)
+              with open(manifest_path, 'w') as f:
+                  f.write(m_content)
+
+          kt_body = """import android.app.Activity
           import android.content.Intent
           import android.net.Uri
           import android.os.Bundle
@@ -107,57 +78,47 @@ EOF
               override fun configureFlutterEngine(flutterEngine: FlutterEngine) {
                   super.configureFlutterEngine(flutterEngine)
                   tts = TextToSpeech(this, this)
-
                   MethodChannel(flutterEngine.dartExecutor.binaryMessenger, CHANNEL).setMethodCallHandler { call, result ->
-                      when (call.method) {
-                          "pickFile" -> {
-                              pendingResult = result
-                              val mimeType = call.argument<String>("mimeType") ?: "*/*"
-                              val intent = Intent(Intent.ACTION_GET_CONTENT).apply {
-                                  type = mimeType
-                                  addCategory(Intent.CATEGORY_OPENABLE)
-                              }
-                              startActivityForResult(Intent.createChooser(intent, "Select File"), PICK_FILE_CODE)
+                      if (call.method == "pickFile") {
+                          pendingResult = result
+                          val mimeType = call.argument<String>("mimeType") ?: "*/*"
+                          val intent = Intent(Intent.ACTION_GET_CONTENT).apply {
+                              type = mimeType
+                              addCategory(Intent.CATEGORY_OPENABLE)
                           }
-                          "synthesizeTTS" -> {
-                              val text = call.argument<String>("text") ?: ""
-                              val speed = call.argument<Double>("speed") ?: 1.0
-                              val outputPath = call.argument<String>("outputPath") ?: ""
-                              
-                              if (text.isEmpty() || outputPath.isEmpty()) {
-                                  result.error("INVALID_ARGS", "Text or Output path is empty", null)
-                                  return@setMethodCallHandler
-                              }
-
-                              if (!isTtsReady || tts == null) {
-                                  result.error("TTS_NOT_READY", "Android Text-to-Speech Engine is initializing. Please retry.", null)
-                                  return@setMethodCallHandler
-                              }
-
-                              tts?.setSpeechRate(speed.toFloat())
-                              val destFile = File(outputPath)
-                              if (destFile.parentFile?.exists() == false) {
-                                  destFile.parentFile?.mkdirs()
-                              }
-
-                              val utteranceId = "WY_PODCAST_" + System.currentTimeMillis()
-                              tts?.setOnUtteranceProgressListener(object : UtteranceProgressListener() {
-                                  override fun onStart(utteranceId: String?) {}
-                                  override fun onDone(id: String?) {
-                                      runOnUiThread { result.success(destFile.absolutePath) }
-                                  }
-                                  override fun onError(id: String?) {
-                                      runOnUiThread { result.error("TTS_SYNTH_FAIL", "Synthesis failed in TTS engine", null) }
-                                  }
-                              })
-
-                              val params = Bundle()
-                              val status = tts?.synthesizeToFile(text, params, destFile, utteranceId)
-                              if (status != TextToSpeech.SUCCESS) {
-                                  result.error("SYNTH_ERROR", "TTS synthesizeToFile call failed", null)
-                              }
+                          startActivityForResult(Intent.createChooser(intent, "Select File"), PICK_FILE_CODE)
+                      } else if (call.method == "synthesizeTTS") {
+                          val text = call.argument<String>("text") ?: ""
+                          val speed = call.argument<Double>("speed") ?: 1.0
+                          val outputPath = call.argument<String>("outputPath") ?: ""
+                          if (text.isEmpty() || outputPath.isEmpty()) {
+                              result.error("INVALID_ARGS", "Text or output path is empty", null)
+                              return@setMethodCallHandler
                           }
-                          else -> result.notImplemented()
+                          if (!isTtsReady || tts == null) {
+                              result.error("TTS_NOT_READY", "Android TTS Engine not ready", null)
+                              return@setMethodCallHandler
+                          }
+                          tts?.setSpeechRate(speed.toFloat())
+                          val destFile = File(outputPath)
+                          destFile.parentFile?.mkdirs()
+                          val utteranceId = "WY_" + System.currentTimeMillis()
+                          tts?.setOnUtteranceProgressListener(object : UtteranceProgressListener() {
+                              override fun onStart(id: String?) {}
+                              override fun onDone(id: String?) {
+                                  runOnUiThread { result.success(destFile.absolutePath) }
+                              }
+                              override fun onError(id: String?) {
+                                  runOnUiThread { result.error("TTS_ERR", "TTS synthesis failed", null) }
+                              }
+                          })
+                          val params = Bundle()
+                          val st = tts?.synthesizeToFile(text, params, destFile, utteranceId)
+                          if (st != TextToSpeech.SUCCESS) {
+                              result.error("SYNTH_FAIL", "synthesizeToFile failed", null)
+                          }
+                      } else {
+                          result.notImplemented()
                       }
                   }
               }
@@ -218,28 +179,38 @@ EOF
               if not first_line.startswith('package '):
                   first_line = 'package com.waiyan.burmesepodcast.burmese_podcast'
               with open(mf, 'w') as f:
-                  f.write(first_line + "\n\n" + kt_code)
-          EOF
+                  f.write(first_line + "\n\n" + kt_body)
 
-          # Generate High-Res WY Gold Icon
-          python3 - << 'EOF'
-          import os
-          from PIL import Image, ImageDraw
+          candidates = []
+          for root_dir, dirs, files in os.walk('.'):
+              dirs[:] = [d for d in dirs if d not in ('android', 'build', '.git', '.dart_tool', 'output_apk')]
+              for file in files:
+                  if file.lower().endswith(('.jpg', '.jpeg', '.png')):
+                      candidates.append(os.path.join(root_dir, file))
 
-          im = Image.new('RGBA', (512, 512), (18, 18, 20, 255))
-          draw = ImageDraw.Draw(im)
-
-          # Draw Gold Circular Ring
-          draw.ellipse((20, 20, 492, 492), outline=(212, 175, 55, 255), width=14)
-
-          # Draw Microphone / WY Logo Geometry
-          # Mic Capsule
-          draw.rounded_rectangle((216, 110, 296, 260), radius=40, fill=(212, 175, 55, 255))
-          # Outer Cradle Arc
-          draw.arc((176, 170, 336, 310), start=0, end=180, fill=(212, 175, 55, 255), width=12)
-          # Stand Stem and Base
-          draw.rectangle((250, 310, 262, 370), fill=(212, 175, 55, 255))
-          draw.rounded_rectangle((200, 370, 312, 386), radius=8, fill=(212, 175, 55, 255))
+          if candidates:
+              im = Image.open(candidates[0]).convert('RGBA')
+              w, h = im.size
+              s = int(min(w, h) * 0.90)
+              left = (w - s) // 2
+              top = (h - s) // 2
+              im = im.crop((left, top, left + s, top + s)).resize((512, 512), Image.Resampling.LANCZOS)
+              mask = Image.new('L', (512, 512), 0)
+              mdraw = ImageDraw.Draw(mask)
+              mdraw.ellipse((2, 2, 510, 510), fill=255)
+              out = Image.new('RGBA', (512, 512), (0, 0, 0, 0))
+              out.paste(im, (0, 0), mask)
+              im = out
+          else:
+              im = Image.new('RGBA', (512, 512), (0, 0, 0, 0))
+              draw = ImageDraw.Draw(im)
+              draw.ellipse((16, 16, 496, 496), fill=(24, 24, 28, 255), outline=(212, 175, 55, 255), width=16)
+              draw.ellipse((216, 110, 296, 190), fill=(212, 175, 55, 255))
+              draw.rectangle((216, 150, 296, 230), fill=(212, 175, 55, 255))
+              draw.ellipse((216, 190, 296, 270), fill=(212, 175, 55, 255))
+              draw.arc((176, 160, 336, 310), start=0, end=180, fill=(212, 175, 55, 255), width=14)
+              draw.rectangle((248, 310, 264, 375), fill=(212, 175, 55, 255))
+              draw.rectangle((196, 370, 316, 388), fill=(212, 175, 55, 255))
 
           sizes = {'mipmap-mdpi': 48, 'mipmap-hdpi': 72, 'mipmap-xhdpi': 96, 'mipmap-xxhdpi': 144, 'mipmap-xxxhdpi': 192}
           res_base = 'android/app/src/main/res'
@@ -264,16 +235,16 @@ EOF
           cp build/app/outputs/flutter-apk/app-debug.apk output_apk/WY-Podcast.apk
           ls -lh output_apk/
 
-      - name: Upload APK Artifact
+      - name: Upload APK Artifact (Uncompressed ZIP)
         uses: actions/upload-artifact@v4
         with:
           name: wys-podcast-apk
           path: output_apk/WY-Podcast.apk
           compression-level: 0
 
-      - name: Publish Direct APK to GitHub Releases
+      - name: Publish Direct APK to GitHub Releases (No ZIP Needed)
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           gh release delete latest --cleanup-tag --yes || true
-          gh release create latest output_apk/WY-Podcast.apk --title "WY's PODCAST APK" --notes "WY's PODCAST APK ကို တိုက်ရိုက်ဒေါင်းလုဒ်ဆွဲနိုင်ပါပြီ။"
+          gh release create latest output_apk/WY-Podcast.apk --title "WY's PODCAST APK" --notes "Zip ဖြည်စရာမလိုဘဲ WY-Podcast.apk ကို တိုက်ရိုက် ဒေါင်းလုဒ်ဆွဲ၍ သွင်းနိုင်ပါသည်။"
