@@ -1223,12 +1223,12 @@ class _PodcastStudioScreenState extends State<PodcastStudioScreen> {
   // Persistent config state
   String _apiKey = '';
 
-  // Tab 1: Offline Whisper Audio/Video to Text
+  // Tab 1: Audio/Video to Text
   bool _isModelReady = false;
-  String _modelStatus = 'Offline Whisper Model စစ်ဆေးနေသည်...';
+  String _modelStatus = 'Audio / Video Speech Engine စစ်ဆေးနေသည်...';
   bool _isProcessingSTT = false;
   String _selectedMediaPath =
-      'ဖိုင် ရွေးချယ်ထားခြင်း မရှိသေးပါ (.mp3 / .wav / .mp4)';
+      'ဖိုင် ရွေးချယ်ထားခြင်း မရှိသေးပါ (.mp3 / .m4a / .wav / .mp4)';
   final TextEditingController _sttOutputController = TextEditingController();
 
   // Tab 2: Podcast Studio (AI)
@@ -1348,23 +1348,11 @@ class _PodcastStudioScreenState extends State<PodcastStudioScreen> {
   }
 
   Future<void> _checkOfflineModel() async {
-    try {
-      final byteData = await rootBundle.load('assets/models/ggml-tiny.bin');
-      final sizeInMb =
-          (byteData.lengthInBytes / (1024 * 1024)).toStringAsFixed(1);
-      if (!mounted) return;
-      setState(() {
-        _isModelReady = true;
-        _modelStatus =
-            'Fully Offline Whisper Model အသင့်ရှိသည် ($sizeInMb MB)';
-      });
-    } catch (_) {
-      if (!mounted) return;
-      setState(() {
-        _isModelReady = true;
-        _modelStatus = 'Audio / Video Speech Engine အသင့်ချိတ်ဆက်ထားသည်';
-      });
-    }
+    if (!mounted) return;
+    setState(() {
+      _isModelReady = true;
+      _modelStatus = 'Audio / Video Speech Engine အသင့်ချိတ်ဆက်ထားသည်';
+    });
   }
 
   // ==================== DIALOGS (HELP, ABOUT, API KEY) ====================
@@ -1430,7 +1418,7 @@ class _PodcastStudioScreenState extends State<PodcastStudioScreen> {
               ),
               const SizedBox(height: 14),
               const Text(
-                '* တစ်ကြိမ်သာ ထည့်သွင်းရန် လိုအပ်ပြီး အပိုင်း (၂) အတွက်သာ ဖြစ်ပါသည်။',
+                '* တစ်ကြိမ်သာ ထည့်သွင်းရန် လိုအပ်ပြီး အမြဲတမ်း သိမ်းဆည်းပေးထားမည် ဖြစ်ပါသည်။',
                 style: TextStyle(
                   color: Color(0xFFB59A45),
                   fontSize: 12.5,
@@ -1778,7 +1766,6 @@ class _PodcastStudioScreenState extends State<PodcastStudioScreen> {
 
       String transcriptResult = '';
 
-      // If API Key is configured and file size is within inline limit (< 18 MB), transcribe real audio/video content
       if (_apiKey.trim().isNotEmpty && fileBytes.length < 18 * 1024 * 1024) {
         try {
           final client = HttpClient();
@@ -1821,7 +1808,8 @@ class _PodcastStudioScreenState extends State<PodcastStudioScreen> {
                   candidates.first['content'] as Map<String, dynamic>?;
               final parts = contentObj?['parts'] as List<dynamic>?;
               if (parts != null && parts.isNotEmpty) {
-                transcriptResult = (parts.first['text'] ?? '').toString().trim();
+                transcriptResult =
+                    (parts.first['text'] ?? '').toString().trim();
               }
             }
           }
@@ -2076,30 +2064,26 @@ class _PodcastStudioScreenState extends State<PodcastStudioScreen> {
     final int dataSize = pcmBytes.length;
     final ByteData header = ByteData(44);
 
-    // "RIFF"
     header.setUint8(0, 0x52);
     header.setUint8(1, 0x49);
     header.setUint8(2, 0x46);
     header.setUint8(3, 0x46);
     header.setUint32(4, 36 + dataSize, Endian.little);
-    // "WAVE"
     header.setUint8(8, 0x57);
     header.setUint8(9, 0x41);
     header.setUint8(10, 0x56);
     header.setUint8(11, 0x45);
-    // "fmt "
     header.setUint8(12, 0x66);
     header.setUint8(13, 0x6D);
     header.setUint8(14, 0x74);
     header.setUint8(15, 0x20);
-    header.setUint32(16, 16, Endian.little); // PCM chunk size
-    header.setUint16(20, 1, Endian.little); // AudioFormat 1 = PCM
-    header.setUint16(22, 1, Endian.little); // NumChannels = 1 (Mono)
+    header.setUint32(16, 16, Endian.little);
+    header.setUint16(20, 1, Endian.little);
+    header.setUint16(22, 1, Endian.little);
     header.setUint32(24, sampleRate, Endian.little);
     header.setUint32(28, byteRate, Endian.little);
-    header.setUint16(32, 2, Endian.little); // BlockAlign
-    header.setUint16(34, 16, Endian.little); // BitsPerSample
-    // "data"
+    header.setUint16(32, 2, Endian.little);
+    header.setUint16(34, 16, Endian.little);
     header.setUint8(36, 0x64);
     header.setUint8(37, 0x61);
     header.setUint8(38, 0x74);
@@ -2178,7 +2162,7 @@ class _PodcastStudioScreenState extends State<PodcastStudioScreen> {
     }
     final fullOutPath = '${targetDir.path}/$audioName';
 
-    // 1. First try Google AI Studio Gemini TTS if API Key is available
+    // 1. Try Google AI Studio Gemini TTS if API Key is configured
     final Uint8List? geminiWavBytes = await _tryGeminiCloudTTS(scriptText);
     if (geminiWavBytes != null && geminiWavBytes.isNotEmpty) {
       final candidateDirs = [
@@ -2199,7 +2183,7 @@ class _PodcastStudioScreenState extends State<PodcastStudioScreen> {
       }
     }
 
-    // 2. Fallback to Native Android TextToSpeech Engine (Works 100% Offline)
+    // 2. Fallback to Native Android TextToSpeech Engine (Works Offline for Custom Text)
     final dynamic generatedPath = await _filePickerChannel.invokeMethod(
       'synthesizeTTS',
       {
@@ -2443,7 +2427,7 @@ class _PodcastStudioScreenState extends State<PodcastStudioScreen> {
               child: ListView(
                 padding: const EdgeInsets.fromLTRB(16, 16, 16, 36),
                 children: [
-                  // ==================== TAB 1: OFFLINE AUDIO/MP4 TO TEXT ====================
+                  // ==================== TAB 1: AUDIO/MP4 TO TEXT ====================
                   if (_selectedTab == 0) ...[
                     Container(
                       padding: const EdgeInsets.all(16),
