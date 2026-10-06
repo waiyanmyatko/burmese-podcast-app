@@ -28,153 +28,19 @@ jobs:
           channel: 'stable'
           cache: true
 
-      - name: Prepare Clean Project, Real Offline Whisper C++ JNI, TTS Engine, and App Icon
+      - name: Prepare Clean Project, Native File Picker, TTS Engine, and App Icon
         run: |
           mkdir -p assets/models
-          curl -L -o assets/models/ggml-tiny.bin https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-tiny.bin
           rm -rf android test pubspec.lock
-          printf "name: burmese_podcast\ndescription: WY Podcast Studio\npublish_to: 'none'\nversion: 1.0.0+1\n\nenvironment:\n  sdk: '>=3.0.0 <4.0.0'\n\ndependencies:\n  flutter:\n    sdk: flutter\n\nflutter:\n  uses-material-design: true\n  assets:\n    - assets/models/ggml-tiny.bin\n" > pubspec.yaml
+          printf "name: burmese_podcast\ndescription: WY Podcast Studio\npublish_to: 'none'\nversion: 1.0.0+1\n\nenvironment:\n  sdk: '>=3.0.0 <4.0.0'\n\ndependencies:\n  flutter:\n    sdk: flutter\n\nflutter:\n  uses-material-design: true\n" > pubspec.yaml
           flutter pub get
           flutter create . --platforms=android --org com.waiyan.burmesepodcast
           sed -i 's/android:label="burmese_podcast"/android:label="WY'\''s PODCAST"/g' android/app/src/main/AndroidManifest.xml
           sed -i 's/android:icon="@mipmap\/ic_launcher"/android:icon="@mipmap\/wy_launcher" android:roundIcon="@mipmap\/wy_launcher"/g' android/app/src/main/AndroidManifest.xml
           rm -rf android/app/src/main/res/mipmap-anydpi*
           rm -f android/app/src/main/res/drawable*/ic_launcher*
-          rm -rf /tmp/whisper
-          git clone --depth 1 --branch v1.5.4 https://github.com/ggerganov/whisper.cpp.git /tmp/whisper
           python3 - << 'EOF'
-          import os, glob, subprocess
-          from PIL import Image, ImageDraw
-
-          jni_cpp = """#include <jni.h>
-          #include <string>
-          #include <vector>
-          #include <fstream>
-          #include <cstdint>
-          #include <algorithm>
-          #include <thread>
-          #include "whisper.h"
-
-          static struct whisper_context* g_ctx = nullptr;
-          static std::string g_loaded_model = "";
-
-          static jstring transcribe_chunk_internal(JNIEnv* env, jstring modelPathJ, jstring pcmPathJ, jlong offsetBytes, jlong lengthBytes) {
-              const char* modelPath = env->GetStringUTFChars(modelPathJ, nullptr);
-              const char* pcmPath = env->GetStringUTFChars(pcmPathJ, nullptr);
-
-              if (g_ctx == nullptr || g_loaded_model != std::string(modelPath)) {
-                  if (g_ctx != nullptr) {
-                      whisper_free(g_ctx);
-                      g_ctx = nullptr;
-                  }
-                  struct whisper_context_params cparams = whisper_context_default_params();
-                  g_ctx = whisper_init_from_file_with_params(modelPath, cparams);
-                  if (g_ctx != nullptr) {
-                      g_loaded_model = std::string(modelPath);
-                  }
-              }
-
-              if (g_ctx == nullptr) {
-                  env->ReleaseStringUTFChars(modelPathJ, modelPath);
-                  env->ReleaseStringUTFChars(pcmPathJ, pcmPath);
-                  return env->NewStringUTF("[ERROR: Failed to initialize Offline Whisper Model]");
-              }
-
-              std::ifstream pcmFile(pcmPath, std::ios::binary);
-              if (!pcmFile.is_open()) {
-                  env->ReleaseStringUTFChars(modelPathJ, modelPath);
-                  env->ReleaseStringUTFChars(pcmPathJ, pcmPath);
-                  return env->NewStringUTF("[ERROR: Cannot open decoded audio PCM file]");
-              }
-
-              pcmFile.seekg(offsetBytes, std::ios::beg);
-              size_t numSamples = static_cast<size_t>(lengthBytes) / sizeof(int16_t);
-              if (numSamples < 800) {
-                  env->ReleaseStringUTFChars(modelPathJ, modelPath);
-                  env->ReleaseStringUTFChars(pcmPathJ, pcmPath);
-                  return env->NewStringUTF("");
-              }
-
-              std::vector<int16_t> pcm16(numSamples);
-              pcmFile.read(reinterpret_cast<char*>(pcm16.data()), numSamples * sizeof(int16_t));
-              size_t bytesRead = static_cast<size_t>(pcmFile.gcount());
-              pcmFile.close();
-
-              size_t actualSamples = bytesRead / sizeof(int16_t);
-              std::vector<float> pcmf32(actualSamples);
-              for (size_t i = 0; i < actualSamples; ++i) {
-                  pcmf32[i] = static_cast<float>(pcm16[i]) / 32768.0f;
-              }
-
-              struct whisper_full_params wparams = whisper_full_default_params(WHISPER_SAMPLING_GREEDY);
-              wparams.print_progress   = false;
-              wparams.print_special    = false;
-              wparams.print_realtime   = false;
-              wparams.print_timestamps = false;
-              wparams.translate        = false;
-              wparams.single_segment   = false;
-              int hwThreads = static_cast<int>(std::thread::hardware_concurrency());
-              wparams.n_threads        = std::min(8, std::max(4, hwThreads));
-              wparams.language         = "en";
-
-              std::string outText = "";
-              if (whisper_full(g_ctx, wparams, pcmf32.data(), static_cast<int>(actualSamples)) == 0) {
-                  int n_segments = whisper_full_n_segments(g_ctx);
-                  for (int i = 0; i < n_segments; ++i) {
-                      const char* seg = whisper_full_get_segment_text(g_ctx, i);
-                      if (seg != nullptr) {
-                          outText += seg;
-                      }
-                  }
-              }
-
-              env->ReleaseStringUTFChars(modelPathJ, modelPath);
-              env->ReleaseStringUTFChars(pcmPathJ, pcmPath);
-              return env->NewStringUTF(outText.c_str());
-          }
-
-          extern "C" JNIEXPORT jstring JNICALL
-          Java_com_waiyan_burmesepodcast_MainActivity_runWhisperChunkNative(
-              JNIEnv* env, jobject thiz, jstring modelPathJ, jstring pcmPathJ, jlong offsetBytes, jlong lengthBytes) {
-              return transcribe_chunk_internal(env, modelPathJ, pcmPathJ, offsetBytes, lengthBytes);
-          }
-
-          extern "C" JNIEXPORT jstring JNICALL
-          Java_com_waiyan_burmesepodcast_burmese_1podcast_MainActivity_runWhisperChunkNative(
-              JNIEnv* env, jobject thiz, jstring modelPathJ, jstring pcmPathJ, jlong offsetBytes, jlong lengthBytes) {
-              return transcribe_chunk_internal(env, modelPathJ, pcmPathJ, offsetBytes, lengthBytes);
-          }
-          """
-
-          with open('/tmp/whisper/whisper_jni.cpp', 'w') as f:
-              f.write(jni_cpp)
-
-          with open('/tmp/whisper/CMakeLists.txt', 'a') as f:
-              f.write('\nadd_library(whisper_jni SHARED whisper_jni.cpp)\ntarget_link_libraries(whisper_jni PRIVATE whisper log)\n')
-
-          ndk_roots = sorted(glob.glob(os.path.expandvars('$ANDROID_HOME/ndk/*')))
-          ndk_path = ndk_roots[-1]
-          toolchain = os.path.join(ndk_path, 'build/cmake/android.toolchain.cmake')
-
-          subprocess.run([
-              'cmake', '-B', '/tmp/whisper/build', '-S', '/tmp/whisper',
-              f'-DCMAKE_TOOLCHAIN_FILE={toolchain}',
-              '-DANDROID_ABI=arm64-v8a',
-              '-DANDROID_PLATFORM=android-24',
-              '-DCMAKE_BUILD_TYPE=Release',
-              '-DCMAKE_POSITION_INDEPENDENT_CODE=ON',
-              '-DBUILD_SHARED_LIBS=OFF',
-              '-DWHISPER_BUILD_TESTS=OFF',
-              '-DWHISPER_BUILD_EXAMPLES=OFF'
-          ], check=True)
-
-          subprocess.run(['cmake', '--build', '/tmp/whisper/build', '--config', 'Release', '-j4'], check=True)
-
-          jni_dir = 'android/app/src/main/jniLibs/arm64-v8a'
-          os.makedirs(jni_dir, exist_ok=True)
-          so_files = glob.glob('/tmp/whisper/build/**/libwhisper_jni.so', recursive=True)
-          if so_files:
-              subprocess.run(['cp', so_files[0], os.path.join(jni_dir, 'libwhisper_jni.so')], check=True)
+          import os, glob, struct, zlib
 
           manifest_path = 'android/app/src/main/AndroidManifest.xml'
           if os.path.exists(manifest_path):
@@ -187,9 +53,6 @@ jobs:
 
           kt_body = """import android.app.Activity
           import android.content.Intent
-          import android.media.MediaCodec
-          import android.media.MediaExtractor
-          import android.media.MediaFormat
           import android.net.Uri
           import android.os.Bundle
           import android.provider.OpenableColumns
@@ -198,10 +61,8 @@ jobs:
           import io.flutter.embedding.android.FlutterActivity
           import io.flutter.embedding.engine.FlutterEngine
           import io.flutter.plugin.common.MethodChannel
-          import java.io.BufferedOutputStream
           import java.io.File
           import java.io.FileOutputStream
-          import java.nio.ByteOrder
           import java.util.HashMap
           import java.util.Locale
 
@@ -212,203 +73,53 @@ jobs:
               private var tts: TextToSpeech? = null
               private var isTtsReady = false
 
-              companion object {
-                  init {
-                      System.loadLibrary("whisper_jni")
-                  }
-              }
-
-              external fun runWhisperChunkNative(
-                  modelPath: String,
-                  pcmPath: String,
-                  offsetBytes: Long,
-                  lengthBytes: Long
-              ): String
-
               override fun configureFlutterEngine(flutterEngine: FlutterEngine) {
                   super.configureFlutterEngine(flutterEngine)
                   tts = TextToSpeech(this, this)
                   MethodChannel(flutterEngine.dartExecutor.binaryMessenger, CHANNEL).setMethodCallHandler { call, result ->
-                      when (call.method) {
-                          "pickFile" -> {
-                              pendingResult = result
-                              val mimeType = call.argument<String>("mimeType") ?: "*/*"
-                              val intent = Intent(Intent.ACTION_GET_CONTENT).apply {
-                                  type = mimeType
-                                  addCategory(Intent.CATEGORY_OPENABLE)
-                              }
-                              startActivityForResult(Intent.createChooser(intent, "Select File"), PICK_FILE_CODE)
+                      if (call.method == "pickFile") {
+                          pendingResult = result
+                          val mimeType = call.argument<String>("mimeType") ?: "*/*"
+                          val intent = Intent(Intent.ACTION_GET_CONTENT).apply {
+                              type = mimeType
+                              addCategory(Intent.CATEGORY_OPENABLE)
                           }
-                          "preparePcm" -> {
-                              val mediaPath = call.argument<String>("mediaPath") ?: ""
-                              Thread {
-                                  try {
-                                      val outPcm = File(cacheDir, "whisper_decoded_16k.pcm")
-                                      if (outPcm.exists()) outPcm.delete()
-                                      val totalBytes = decodeMediaTo16kPcm(mediaPath, outPcm.absolutePath)
-                                      val map = HashMap<String, Any>()
-                                      map["pcmPath"] = outPcm.absolutePath
-                                      map["totalBytes"] = totalBytes
-                                      runOnUiThread { result.success(map) }
-                                  } catch (e: Exception) {
-                                      runOnUiThread { result.error("DECODE_ERR", e.localizedMessage ?: "Audio decode error", null) }
-                                  }
-                              }.start()
+                          startActivityForResult(Intent.createChooser(intent, "Select File"), PICK_FILE_CODE)
+                      } else if (call.method == "synthesizeTTS") {
+                          val rawText = call.argument<String>("text") ?: ""
+                          val speed = call.argument<Double>("speed") ?: 1.0
+                          val outputPath = call.argument<String>("outputPath") ?: ""
+                          if (rawText.isEmpty() || outputPath.isEmpty()) {
+                              result.error("INVALID_ARGS", "Text or output path is empty", null)
+                              return@setMethodCallHandler
                           }
-                          "transcribePcmChunk" -> {
-                              val modelPath = call.argument<String>("modelPath") ?: ""
-                              val pcmPath = call.argument<String>("pcmPath") ?: ""
-                              val offsetBytes = (call.argument<Number>("offsetBytes") ?: 0L).toLong()
-                              val lengthBytes = (call.argument<Number>("lengthBytes") ?: 0L).toLong()
-                              Thread {
-                                  try {
-                                      val text = runWhisperChunkNative(modelPath, pcmPath, offsetBytes, lengthBytes)
-                                      runOnUiThread { result.success(text) }
-                                  } catch (e: Exception) {
-                                      runOnUiThread { result.error("WHISPER_ERR", e.localizedMessage ?: "Whisper error", null) }
-                                  }
-                              }.start()
+                          if (!isTtsReady || tts == null) {
+                              result.error("TTS_NOT_READY", "Android TTS Engine not ready", null)
+                              return@setMethodCallHandler
                           }
-                          "synthesizeTTS" -> {
-                              val text = call.argument<String>("text") ?: ""
-                              val speed = call.argument<Double>("speed") ?: 1.0
-                              val outputPath = call.argument<String>("outputPath") ?: ""
-                              if (text.isEmpty() || outputPath.isEmpty()) {
-                                  result.error("INVALID_ARGS", "Text or output path is empty", null)
-                                  return@setMethodCallHandler
+                          val safeText = if (rawText.length > 3900) rawText.substring(0, 3900) else rawText
+                          tts?.setSpeechRate(speed.toFloat())
+                          val destFile = File(outputPath)
+                          destFile.parentFile?.mkdirs()
+                          val utteranceId = "WY_" + System.currentTimeMillis()
+                          tts?.setOnUtteranceProgressListener(object : UtteranceProgressListener() {
+                              override fun onStart(id: String?) {}
+                              override fun onDone(id: String?) {
+                                  runOnUiThread { result.success(destFile.absolutePath) }
                               }
-                              if (!isTtsReady || tts == null) {
-                                  result.error("TTS_NOT_READY", "Android TTS Engine not ready", null)
-                                  return@setMethodCallHandler
+                              override fun onError(id: String?) {
+                                  runOnUiThread { result.error("TTS_ERR", "TTS synthesis failed", null) }
                               }
-                              tts?.setSpeechRate(speed.toFloat())
-                              val destFile = File(outputPath)
-                              destFile.parentFile?.mkdirs()
-                              val utteranceId = "WY_" + System.currentTimeMillis()
-                              tts?.setOnUtteranceProgressListener(object : UtteranceProgressListener() {
-                                  override fun onStart(id: String?) {}
-                                  override fun onDone(id: String?) {
-                                      runOnUiThread { result.success(destFile.absolutePath) }
-                                  }
-                                  override fun onError(id: String?) {
-                                      runOnUiThread { result.error("TTS_ERR", "TTS synthesis failed", null) }
-                                  }
-                              })
-                              val params = Bundle()
-                              val st = tts?.synthesizeToFile(text, params, destFile, utteranceId)
-                              if (st != TextToSpeech.SUCCESS) {
-                                  result.error("SYNTH_FAIL", "synthesizeToFile failed", null)
-                              }
+                          })
+                          val params = Bundle()
+                          val st = tts?.synthesizeToFile(safeText, params, destFile, utteranceId)
+                          if (st != TextToSpeech.SUCCESS) {
+                              result.error("SYNTH_FAIL", "synthesizeToFile failed", null)
                           }
-                          else -> result.notImplemented()
+                      } else {
+                          result.notImplemented()
                       }
                   }
-              }
-
-              private fun decodeMediaTo16kPcm(inputPath: String, outputPcmPath: String): Long {
-                  val extractor = MediaExtractor()
-                  extractor.setDataSource(inputPath)
-                  var audioTrackIndex = -1
-                  var format: MediaFormat? = null
-                  for (i in 0 until extractor.trackCount) {
-                      val f = extractor.getTrackFormat(i)
-                      val mime = f.getString(MediaFormat.KEY_MIME) ?: ""
-                      if (mime.startsWith("audio/")) {
-                          audioTrackIndex = i
-                          format = f
-                          break
-                      }
-                  }
-                  if (audioTrackIndex == -1 || format == null) {
-                      extractor.release()
-                      throw Exception("ရွေးချယ်ထားသော ဖိုင်ထဲတွင် အသံလမ်းကြောင်း (Audio Track) မပါဝင်ပါ")
-                  }
-                  extractor.selectTrack(audioTrackIndex)
-                  val mime = format.getString(MediaFormat.KEY_MIME)!!
-                  var sampleRate = if (format.containsKey(MediaFormat.KEY_SAMPLE_RATE)) format.getInteger(MediaFormat.KEY_SAMPLE_RATE) else 44100
-                  var channels = if (format.containsKey(MediaFormat.KEY_CHANNEL_COUNT)) format.getInteger(MediaFormat.KEY_CHANNEL_COUNT) else 1
-
-                  val codec = MediaCodec.createDecoderByType(mime)
-                  codec.configure(format, null, null, 0)
-                  codec.start()
-
-                  val outFile = File(outputPcmPath)
-                  val bos = BufferedOutputStream(FileOutputStream(outFile), 65536)
-                  val bufferInfo = MediaCodec.BufferInfo()
-                  var isEOS = false
-                  var totalOutBytes = 0L
-                  var resamplePos = 0.0
-                  var eosIdleCount = 0
-
-                  while (true) {
-                      if (!isEOS) {
-                          val inIndex = codec.dequeueInputBuffer(10000)
-                          if (inIndex >= 0) {
-                              val inputBuffer = codec.getInputBuffer(inIndex)!!
-                              val sampleSize = extractor.readSampleData(inputBuffer, 0)
-                              if (sampleSize < 0) {
-                                  codec.queueInputBuffer(inIndex, 0, 0, 0, MediaCodec.BUFFER_FLAG_END_OF_STREAM)
-                                  isEOS = true
-                              } else {
-                                  val pts = extractor.sampleTime
-                                  codec.queueInputBuffer(inIndex, 0, sampleSize, pts, 0)
-                                  extractor.advance()
-                              }
-                          }
-                      }
-
-                      val outIndex = codec.dequeueOutputBuffer(bufferInfo, 10000)
-                      if (outIndex >= 0) {
-                          eosIdleCount = 0
-                          val outBuffer = codec.getOutputBuffer(outIndex)!!
-                          if (bufferInfo.size > 0) {
-                              outBuffer.position(bufferInfo.offset)
-                              outBuffer.limit(bufferInfo.offset + bufferInfo.size)
-                              val shortBuf = outBuffer.order(ByteOrder.nativeOrder()).asShortBuffer()
-                              val numShorts = shortBuf.remaining()
-                              val frames = if (channels > 0) numShorts / channels else 0
-                              if (frames > 0) {
-                                  val step = sampleRate.toDouble() / 16000.0
-                                  while (resamplePos < frames) {
-                                      val fIdx = resamplePos.toInt()
-                                      var sum = 0
-                                      for (c in 0 until channels) {
-                                          sum += shortBuf.get(fIdx * channels + c).toInt()
-                                      }
-                                      val mono = (sum / channels).toShort().toInt()
-                                      bos.write(mono and 0xFF)
-                                      bos.write((mono shr 8) and 0xFF)
-                                      totalOutBytes += 2L
-                                      resamplePos += step
-                                  }
-                                  resamplePos -= frames.toDouble()
-                                  if (resamplePos < 0.0) resamplePos = 0.0
-                              }
-                          }
-                          codec.releaseOutputBuffer(outIndex, false)
-                          if ((bufferInfo.flags and MediaCodec.BUFFER_FLAG_END_OF_STREAM) != 0) {
-                              break
-                          }
-                      } else if (outIndex == MediaCodec.INFO_OUTPUT_FORMAT_CHANGED) {
-                          val newFormat = codec.outputFormat
-                          if (newFormat.containsKey(MediaFormat.KEY_SAMPLE_RATE)) {
-                              sampleRate = newFormat.getInteger(MediaFormat.KEY_SAMPLE_RATE)
-                          }
-                          if (newFormat.containsKey(MediaFormat.KEY_CHANNEL_COUNT)) {
-                              channels = newFormat.getInteger(MediaFormat.KEY_CHANNEL_COUNT)
-                          }
-                      } else if (outIndex == MediaCodec.INFO_TRY_AGAIN_LATER && isEOS) {
-                          eosIdleCount++
-                          if (eosIdleCount > 25) break
-                      }
-                  }
-
-                  bos.flush()
-                  bos.close()
-                  codec.stop()
-                  codec.release()
-                  extractor.release()
-                  return totalOutBytes
               }
 
               override fun onInit(status: Int) {
@@ -469,46 +180,46 @@ jobs:
               with open(mf, 'w') as f:
                   f.write(first_line + "\n\n" + kt_body)
 
-          candidates = []
-          for root_dir, dirs, files in os.walk('.'):
-              dirs[:] = [d for d in dirs if d not in ('android', 'build', '.git', '.dart_tool', 'output_apk')]
-              for file in files:
-                  if file.lower().endswith(('.jpg', '.jpeg', '.png')):
-                      candidates.append(os.path.join(root_dir, file))
+          def make_icon_png(sz):
+              raw = bytearray()
+              for y in range(sz):
+                  raw.append(0)
+                  ny = (y + 0.5) / sz
+                  for x in range(sz):
+                      nx = (x + 0.5) / sz
+                      dx = nx - 0.5
+                      dy = ny - 0.5
+                      d = (dx * dx + dy * dy) ** 0.5
+                      if d > 0.47:
+                          raw.extend((0, 0, 0, 0))
+                      elif d >= 0.43:
+                          raw.extend((212, 175, 55, 255))
+                      else:
+                          in_cap = (abs( dx ) <= 0.08 and 0.27 <= ny <= 0.46) or ((dx * dx + (ny - 0.27) ** 2) <= 0.08 ** 2) or ((dx * dx + (ny - 0.46) ** 2) <= 0.08 ** 2)
+                          dc = (dx * dx + (ny - 0.45) ** 2) ** 0.5
+                          in_arc = (0.135 <= dc <= 0.168) and (ny >= 0.45)
+                          in_stem = (abs(dx) <= 0.02) and (0.60 <= ny <= 0.74)
+                          in_base = (abs(dx) <= 0.12) and (0.72 <= ny <= 0.76)
+                          if in_cap or in_arc or in_stem or in_base:
+                              raw.extend((212, 175, 55, 255))
+                          else:
+                              raw.extend((24, 24, 28, 255))
 
-          if candidates:
-              im = Image.open(candidates[0]).convert('RGBA')
-              w, h = im.size
-              s = int(min(w, h) * 0.90)
-              left = (w - s) // 2
-              top = (h - s) // 2
-              im = im.crop((left, top, left + s, top + s)).resize((512, 512), Image.Resampling.LANCZOS)
-              mask = Image.new('L', (512, 512), 0)
-              mdraw = ImageDraw.Draw(mask)
-              mdraw.ellipse((2, 2, 510, 510), fill=255)
-              out = Image.new('RGBA', (512, 512), (0, 0, 0, 0))
-              out.paste(im, (0, 0), mask)
-              im = out
-          else:
-              im = Image.new('RGBA', (512, 512), (0, 0, 0, 0))
-              draw = ImageDraw.Draw(im)
-              draw.ellipse((16, 16, 496, 496), fill=(24, 24, 28, 255), outline=(212, 175, 55, 255), width=16)
-              draw.ellipse((216, 110, 296, 190), fill=(212, 175, 55, 255))
-              draw.rectangle((216, 150, 296, 230), fill=(212, 175, 55, 255))
-              draw.ellipse((216, 190, 296, 270), fill=(212, 175, 55, 255))
-              draw.arc((176, 160, 336, 310), start=0, end=180, fill=(212, 175, 55, 255), width=14)
-              draw.rectangle((248, 310, 264, 375), fill=(212, 175, 55, 255))
-              draw.rectangle((196, 370, 316, 388), fill=(212, 175, 55, 255))
+              def chunk(tag, data):
+                  return struct.pack("!I", len(data)) + tag + data + struct.pack("!I", zlib.crc32(tag + data) & 0xffffffff)
+
+              ihdr = struct.pack("!IIBBBBB", sz, sz, 8, 6, 0, 0, 0)
+              return b"\x89PNG\r\n\x1a\n" + chunk(b"IHDR", ihdr) + chunk(b"IDAT", zlib.compress(bytes(raw), 9)) + chunk(b"IEND", b"")
 
           sizes = {'mipmap-mdpi': 48, 'mipmap-hdpi': 72, 'mipmap-xhdpi': 96, 'mipmap-xxhdpi': 144, 'mipmap-xxxhdpi': 192}
           res_base = 'android/app/src/main/res'
           for folder, sz in sizes.items():
               p = os.path.join(res_base, folder)
               os.makedirs(p, exist_ok=True)
-              resized = im.resize((sz, sz), Image.Resampling.LANCZOS)
-              resized.save(os.path.join(p, 'ic_launcher.png'))
-              resized.save(os.path.join(p, 'ic_launcher_round.png'))
-              resized.save(os.path.join(p, 'wy_launcher.png'))
+              png_bytes = make_icon_png(sz)
+              for fname in ('ic_launcher.png', 'ic_launcher_round.png', 'wy_launcher.png'):
+                  with open(os.path.join(p, fname), 'wb') as f:
+                      f.write(png_bytes)
           EOF
 
       - name: Accept Android Licenses
