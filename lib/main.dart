@@ -18,12 +18,12 @@ const MethodChannel _channel = MethodChannel('com.waiyan.burmesepodcast/file_pic
 const String kPointSystemPrompt =
     'Transform the provided transcript into a natural Burmese single-presenter podcast script. '
     'Preserve all key facts, explanations, examples, and cause-and-effect relationships while combining repetitive ideas naturally. '
-    'Do not use speaker labels or stage directions. If the output exceeds length limits, split using [PART X] and [MORE], continue when prompted with Next, and finish with [END OF SCRIPT].';
+    'Do not use speaker labels or stage directions. If splitting is needed, use [PART X] and [MORE], continue on Next, and finish with [END OF SCRIPT].';
 
 const String kLengthSystemPrompt =
     'Transform the provided transcript into a comprehensive, detailed Burmese single-presenter documentary podcast script. '
-    'Preserve the full information density, chronological scenes, supporting details, and reasoning without summarizing. '
-    'Do not use speaker labels or stage directions. If splitting is required, use [PART X] and [MORE], continue on Next, and conclude with [END OF SCRIPT].';
+    'Preserve full information density, chronological scenes, supporting details, and reasoning without summarizing. '
+    'Do not use speaker labels or stage directions. If splitting is needed, use [PART X] and [MORE], continue on Next, and finish with [END OF SCRIPT].';
 
 class WysPodcastApp extends StatelessWidget {
   const WysPodcastApp({super.key});
@@ -99,52 +99,45 @@ class _PodcastStudioScreenState extends State<PodcastStudioScreen> {
     _initData();
   }
 
-  Future<Directory> _appDir() async {
-    final d = Directory('/data/user/0/com.waiyan.burmesepodcast/files');
-    if (!await d.exists()) await d.create(recursive: true);
-    return d;
-  }
-
   Future<void> _initData() async {
     try {
-      final dir = await _appDir();
-      final cfg = File('${dir.path}/settings.json');
-      if (await cfg.exists()) {
-        final j = jsonDecode(await cfg.readAsString());
+      final prefs = await _channel.invokeMethod('loadPrefs');
+      if (prefs is Map && mounted) {
         setState(() {
-          _apiKey = (j['apiKey'] ?? '').toString();
-          if (_styles.contains(j['style'])) _style = j['style'];
-          if (_voices.contains(j['voice'])) _voice = j['voice'];
-          if (j['speed'] is num) _speed = (j['speed'] as num).toDouble();
-          if (j['useGem'] is bool) _useGem = j['useGem'];
-          if (j['gemMode'] != null) _gemMode = j['gemMode'];
+          _apiKey = (prefs['apiKey'] ?? '').toString().trim();
+          if (_styles.contains(prefs['style'])) _style = prefs['style'];
+          if (_voices.contains(prefs['voice'])) _voice = prefs['voice'];
+          if (prefs['speed'] is num) _speed = (prefs['speed'] as num).toDouble().clamp(0.5, 2.0);
+          if (prefs['useGem'] is bool) _useGem = prefs['useGem'];
+          if (prefs['gemMode'] == 'For Point' || prefs['gemMode'] == 'For Length') {
+            _gemMode = prefs['gemMode'];
+          }
         });
       }
-      final mf = File('${dir.path}/ggml-tiny.bin');
-      if (!await mf.exists() || await mf.length() < 1000000) {
-        final bd = await rootBundle.load('assets/models/ggml-tiny.bin');
-        await mf.writeAsBytes(bd.buffer.asUint8List(bd.offsetInBytes, bd.lengthInBytes), flush: true);
+      final mp = await _channel.invokeMethod('prepareModel');
+      if (mounted && mp != null) {
+        setState(() {
+          _modelPath = mp.toString();
+          _modelStatus = '✓ Offline Whisper Model အသင့်ရှိသည် (75 MB)';
+        });
       }
-      setState(() {
-        _modelPath = mf.path;
-        _modelStatus = 'Offline Whisper Model အသင့်ရှိသည်';
-      });
     } catch (e) {
-      setState(() => _modelStatus = 'Model Status: $e');
+      if (mounted) setState(() => _modelStatus = 'Model Error: $e');
     }
   }
 
   Future<void> _saveCfg({String? key}) async {
-    if (key != null) setState(() => _apiKey = key.trim());
-    final dir = await _appDir();
-    await File('${dir.path}/settings.json').writeAsString(jsonEncode({
+    if (key != null) {
+      setState(() => _apiKey = key.trim());
+    }
+    await _channel.invokeMethod('savePrefs', {
       'apiKey': _apiKey,
       'style': _style,
       'voice': _voice,
       'speed': _speed,
       'useGem': _useGem,
       'gemMode': _gemMode,
-    }));
+    });
   }
 
   void _snack(String m) {
@@ -158,7 +151,7 @@ class _PodcastStudioScreenState extends State<PodcastStudioScreen> {
       context: context,
       builder: (ctx) => AlertDialog(
         backgroundColor: cardBg,
-        title: const Text('Gemini API Key', style: TextStyle(color: goldAccent)),
+        title: const Text('Gemini API Key သိမ်းဆည်းရန်', style: TextStyle(color: goldAccent, fontSize: 18)),
         content: TextField(
           controller: c,
           decoration: InputDecoration(
@@ -175,12 +168,12 @@ class _PodcastStudioScreenState extends State<PodcastStudioScreen> {
         actions: [
           TextButton(onPressed: () => Navigator.pop(ctx), child: const Text('ပိတ်မည်')),
           FilledButton(
-            onPressed: () {
-              _saveCfg(key: c.text);
-              Navigator.pop(ctx);
-              _snack('API Key သိမ်းဆည်းပြီးပါပြီ');
+            onPressed: () async {
+              await _saveCfg(key: c.text);
+              if (mounted) Navigator.pop(ctx);
+              _snack('API Key ကို အမြဲတမ်း သိမ်းဆည်းပြီးပါပြီ');
             },
-            child: const Text('Save'),
+            child: const Text('Save သိမ်းမည်'),
           ),
         ],
       ),
@@ -188,15 +181,28 @@ class _PodcastStudioScreenState extends State<PodcastStudioScreen> {
   }
 
   Future<void> _pickMedia(String mime) async {
-    final res = await _channel.invokeMethod('pickFile', {'mimeType': mime});
+    final res = await _channel.invokeMethod('pickFile', {'mode': 'media', 'mimeType': mime});
     if (res is Map && res['path'] != null) {
       setState(() => _mediaPath = res['path'].toString());
+      _snack('ရွေးချယ်ပြီးပါပြီ: ${res['name']}');
+    }
+  }
+
+  Future<void> _pickTxtFile() async {
+    try {
+      final res = await _channel.invokeMethod('pickFile', {'mode': 'txt', 'mimeType': '*/*'});
+      if (res is Map && res['content'] != null) {
+        setState(() => _inputCtrl.text = res['content'].toString());
+        _snack('.txt ဖိုင် (${res['name']}) မှ စာသားများ ထည့်သွင်းပြီးပါပြီ');
+      }
+    } catch (e) {
+      _snack('ဖိုင်ဖတ်ရာတွင် အမှားရှိနေပါသည်: $e');
     }
   }
 
   Future<void> _runWhisper() async {
     if (_mediaPath.contains('မရှိသေးပါ')) {
-      _snack('ဖိုင် အရင်ရွေးပေးပါ');
+      _snack('အသံဖိုင် သို့မဟုတ် MP4 ဗီဒီယို အရင်ရွေးပေးပါ');
       return;
     }
     setState(() => _busySTT = true);
@@ -209,10 +215,10 @@ class _PodcastStudioScreenState extends State<PodcastStudioScreen> {
         _busySTT = false;
         _sttCtrl.text = (res ?? '').toString().trim();
       });
-      _snack('စာသားပြောင်းပြီးပါပြီ');
+      _snack('Offline Whisper စာသားထုတ်ယူခြင်း ပြီးမြောက်ပါပြီ');
     } catch (e) {
       setState(() => _busySTT = false);
-      _snack('Error: $e');
+      _snack('STT Error: $e');
     }
   }
 
@@ -252,7 +258,7 @@ class _PodcastStudioScreenState extends State<PodcastStudioScreen> {
         {'role': 'user', 'parts': [{'text': '[PART ${p + 1}]\n${parts[p]}'}]}
       ];
       for (int step = 0; step < 10; step++) {
-        setState(() => _status = 'Script ပြောင်းနေသည် (Part ${p + 1}/${parts.length})...');
+        setState(() => _status = 'Gem Prompt ဖြင့် မြန်မာ Script ရေးနေသည် (Part ${p + 1}/${parts.length})...');
         final req = await client.postUrl(Uri.parse(
           'https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=$_apiKey',
         ));
@@ -263,7 +269,7 @@ class _PodcastStudioScreenState extends State<PodcastStudioScreen> {
         })));
         final resp = await req.close();
         final body = await resp.transform(utf8.decoder).join();
-        if (resp.statusCode != 200) throw Exception(body);
+        if (resp.statusCode != 200) throw Exception('Gemini Error (${resp.statusCode}): $body');
         final chunk = (jsonDecode(body)['candidates']?[0]?['content']?['parts']?[0]?['text'] ?? '').toString();
         sb.writeln(chunk);
         if (chunk.contains('[MORE]') && !chunk.contains('[END OF SCRIPT]')) {
@@ -302,49 +308,63 @@ class _PodcastStudioScreenState extends State<PodcastStudioScreen> {
     return b.toBytes();
   }
 
-  Future<Uint8List?> _cloudTtsMerged(String script) async {
-    if (_apiKey.isEmpty) return null;
-    try {
-      String vName = 'Puck';
-      for (final n in ['Puck', 'Charon', 'Fenrir', 'Orus', 'Kore', 'Aoede', 'Zephyr', 'Leda']) {
-        if (_voice.contains(n)) vName = n;
-      }
-      final chunks = _chunkText(script, 1300);
-      final pcmBuilder = BytesBuilder(copy: false);
-      final client = HttpClient();
+  Future<Uint8List> _geminiAiStudioTtsMerged(String script) async {
+    String vName = 'Puck';
+    for (final n in ['Puck', 'Charon', 'Fenrir', 'Orus', 'Kore', 'Aoede', 'Zephyr', 'Leda']) {
+      if (_voice.contains(n)) vName = n;
+    }
+    final chunks = _chunkText(script, 2500);
+    final pcmBuilder = BytesBuilder(copy: false);
+    final client = HttpClient();
 
-      for (int i = 0; i < chunks.length; i++) {
-        setState(() => _status = 'အသံဖိုင် အပိုင်း (${i + 1}/${chunks.length}) ထုတ်၍ ဆက်နေသည်...');
+    for (int i = 0; i < chunks.length; i++) {
+      setState(() => _status = 'Gemini Voice ($vName) ဖြင့် အသံထုတ်နေသည် (အပိုင်း ${i + 1}/${chunks.length})...');
+      int retries = 0;
+      while (true) {
         final req = await client.postUrl(Uri.parse(
           'https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-preview-tts:generateContent?key=$_apiKey',
         ));
         req.headers.set('Content-Type', 'application/json; charset=utf-8');
         req.add(utf8.encode(jsonEncode({
-          'contents': [{'role': 'user', 'parts': [{'text': chunks[i]}]}],
+          'contents': [
+            {
+              'parts': [
+                {'text': 'Read the following podcast script aloud naturally in a $_style tone:\n\n${chunks[i]}'}
+              ]
+            }
+          ],
           'generationConfig': {
             'responseModalities': ['AUDIO'],
-            'speechConfig': {'voiceConfig': {'prebuiltVoiceConfig': {'voiceName': vName}}}
+            'speechConfig': {
+              'voiceConfig': {
+                'prebuiltVoiceConfig': {'voiceName': vName}
+              }
+            }
           }
         })));
         final resp = await req.close();
         final body = await resp.transform(utf8.decoder).join();
+        if (resp.statusCode == 429 && retries < 3) {
+          retries++;
+          setState(() => _status = 'API Rate Limit ခေတ္တစောင့်နေသည် (15s)...');
+          await Future.delayed(const Duration(seconds: 15));
+          continue;
+        }
         if (resp.statusCode != 200) {
           client.close();
-          return null;
+          throw Exception('Gemini TTS Error (${resp.statusCode}): VPN ဖွင့်ထားရန် နှင့် API Key မှန်ကန်ကြောင်း စစ်ဆေးပါ။\n$body');
         }
         final b64 = (jsonDecode(body)['candidates']?[0]?['content']?['parts']?[0]?['inlineData']?['data'] ?? '').toString();
         if (b64.isEmpty) {
           client.close();
-          return null;
+          throw Exception('Gemini TTS မှ အသံဒေတာ မရရှိပါ။');
         }
         pcmBuilder.add(base64Decode(b64));
+        break;
       }
-      client.close();
-      final pcm = pcmBuilder.toBytes();
-      return pcm.isEmpty ? null : _wrapWav(pcm, 24000);
-    } catch (_) {
-      return null;
     }
+    client.close();
+    return _wrapWav(pcmBuilder.toBytes(), 24000);
   }
 
   Future<void> _generateAudio() async {
@@ -353,7 +373,8 @@ class _PodcastStudioScreenState extends State<PodcastStudioScreen> {
       _snack('စာသား အရင်ထည့်ပေးပါ');
       return;
     }
-    if (_useGem && _apiKey.isEmpty) {
+    if (_apiKey.isEmpty) {
+      _snack('Gemini AI Voice ထုတ်ရန် API Key အရင်ထည့်ပေးပါ');
       _apiDialog();
       return;
     }
@@ -362,16 +383,15 @@ class _PodcastStudioScreenState extends State<PodcastStudioScreen> {
       _status = 'စတင် ထုတ်လုပ်နေသည်...';
     });
     try {
-      final script = (_useGem && _apiKey.isNotEmpty) ? await _transformScript(raw) : raw;
+      final script = _useGem ? await _transformScript(raw) : raw;
       setState(() => _scriptCtrl.text = script);
 
-      final wavBytes = await _cloudTtsMerged(script);
-      setState(() => _status = 'အသံဖိုင် တစ်ပုဒ်တည်းအဖြစ် ပေါင်းစပ်သိမ်းဆည်းနေသည်...');
+      final wavBytes = await _geminiAiStudioTtsMerged(script);
+      setState(() => _status = 'အသံဖိုင် တစ်ပုဒ်တည်းအဖြစ် သိမ်းဆည်းနေသည်...');
 
-      final res = await _channel.invokeMethod('generateTTS', {
-        'text': script,
-        'speed': _speed,
-        'cloudBytes': wavBytes,
+      final res = await _channel.invokeMethod('saveAudio', {
+        'bytes': wavBytes,
+        'ext': 'wav',
       });
 
       final local = (res is Map ? res['local'] : res).toString();
@@ -386,7 +406,7 @@ class _PodcastStudioScreenState extends State<PodcastStudioScreen> {
     } catch (e) {
       setState(() {
         _busyTTS = false;
-        _status = 'Error: $e';
+        _status = '$e';
       });
     }
   }
@@ -514,12 +534,7 @@ class _PodcastStudioScreenState extends State<PodcastStudioScreen> {
         children: [
           Expanded(
             child: OutlinedButton(
-              onPressed: () async {
-                final res = await _channel.invokeMethod('pickFile', {'mimeType': 'text/*'});
-                if (res is Map && res['path'] != null) {
-                  _inputCtrl.text = await File(res['path'].toString()).readAsString();
-                }
-              },
+              onPressed: _pickTxtFile,
               child: const Text('.txt ဖိုင် ရွေးပါ'),
             ),
           ),
@@ -553,7 +568,12 @@ class _PodcastStudioScreenState extends State<PodcastStudioScreen> {
                     backgroundColor: (_useGem && _gemMode == m) ? goldAccent : Colors.transparent,
                     foregroundColor: (_useGem && _gemMode == m) ? Colors.black : Colors.white,
                   ),
-                  onPressed: _useGem ? () => setState(() => _gemMode = m) : null,
+                  onPressed: _useGem
+                      ? () {
+                          setState(() => _gemMode = m);
+                          _saveCfg();
+                        }
+                      : null,
                   child: Text(m),
                 ),
               ),
@@ -573,13 +593,19 @@ class _PodcastStudioScreenState extends State<PodcastStudioScreen> {
         value: _style,
         isExpanded: true,
         items: _styles.map((s) => DropdownMenuItem(value: s, child: Text(s, style: const TextStyle(fontSize: 13)))).toList(),
-        onChanged: (v) => setState(() => _style = v!),
+        onChanged: (v) {
+          setState(() => _style = v!);
+          _saveCfg();
+        },
       ),
       DropdownButton<String>(
         value: _voice,
         isExpanded: true,
         items: _voices.map((s) => DropdownMenuItem(value: s, child: Text(s, style: const TextStyle(fontSize: 13)))).toList(),
-        onChanged: (v) => setState(() => _voice = v!),
+        onChanged: (v) {
+          setState(() => _voice = v!);
+          _saveCfg();
+        },
       ),
       Slider(
         value: _speed,
@@ -589,6 +615,7 @@ class _PodcastStudioScreenState extends State<PodcastStudioScreen> {
         activeColor: goldAccent,
         label: '${_speed.toStringAsFixed(1)}x',
         onChanged: (v) => setState(() => _speed = v),
+        onChangeEnd: (_) => _saveCfg(),
       ),
       if (_status.isNotEmpty)
         Padding(
