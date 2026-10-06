@@ -28,7 +28,7 @@ jobs:
           channel: 'stable'
           cache: true
 
-      - name: Build Native Engines and Gold App Icon
+      - name: Prepare Project, Offline Whisper JNI, TTS Engine, and Icon
         run: |
           sudo apt-get update
           sudo apt-get install -y python3-pil cmake ninja-build
@@ -39,25 +39,12 @@ jobs:
           flutter pub get
           flutter create . --platforms=android --org com.waiyan.burmesepodcast
 
-          NDK_PATH=$(ls -d $ANDROID_HOME/ndk/* | sort -V | tail -n 1)
-          git clone --depth 1 --branch v1.5.4 https://github.com/ggerganov/whisper.cpp.git /tmp/wcpp
-          cmake -GNinja -B /tmp/wcpp/build -S /tmp/wcpp \
-            -DCMAKE_TOOLCHAIN_FILE="$NDK_PATH/build/cmake/android.toolchain.cmake" \
-            -DANDROID_ABI=arm64-v8a \
-            -DANDROID_PLATFORM=android-24 \
-            -DANDROID_STL=c++_static \
-            -DWHISPER_BUILD_TESTS=OFF \
-            -DWHISPER_BUILD_EXAMPLES=ON \
-            -DBUILD_SHARED_LIBS=OFF \
-            -DCMAKE_BUILD_TYPE=Release
-          cmake --build /tmp/wcpp/build --target main -j4
-          mkdir -p android/app/src/main/jniLibs/arm64-v8a
-          cp /tmp/wcpp/build/bin/main android/app/src/main/jniLibs/arm64-v8a/libwhisper.so
-
           sed -i 's/android:label="burmese_podcast"/android:label="WY'\''s PODCAST"/g' android/app/src/main/AndroidManifest.xml
-          sed -i 's/android:icon="@mipmap\/ic_launcher"/android:icon="@mipmap\/ic_launcher" android:roundIcon="@mipmap\/ic_launcher_round" android:extractNativeLibs="true"/g' android/app/src/main/AndroidManifest.xml
+          sed -i 's/android:icon="@mipmap\/ic_launcher"/android:icon="@mipmap\/ic_launcher" android:roundIcon="@mipmap\/ic_launcher_round"/g' android/app/src/main/AndroidManifest.xml
           rm -rf android/app/src/main/res/mipmap-anydpi*
           rm -f android/app/src/main/res/drawable*/ic_launcher*
+
+          git clone --depth 1 --branch v1.5.4 https://github.com/ggerganov/whisper.cpp.git /tmp/wcpp
 
           python3 - << 'EOF'
           import os, glob
@@ -70,6 +57,84 @@ jobs:
               perm = '<queries><intent><action android:name="android.intent.action.TTS_SERVICE" /></intent></queries>\n    <uses-permission android:name="android.permission.INTERNET" />\n    <uses-permission android:name="android.permission.READ_EXTERNAL_STORAGE" />\n    <uses-permission android:name="android.permission.WRITE_EXTERNAL_STORAGE" />\n    <application'
               with open(mp, 'w') as f:
                   f.write(txt.replace('<application', perm, 1))
+
+          mfs = glob.glob('android/**/MainActivity.kt', recursive=True)
+          pkg_line = 'package com.waiyan.burmesepodcast.burmese_podcast'
+          if mfs:
+              with open(mfs[0], 'r') as f:
+                  fl = f.readline().strip()
+                  if fl.startswith('package '):
+                      pkg_line = fl
+          pkg_slash = pkg_line.replace('package ', '').strip().replace('.', '/')
+
+          cpp_code = f"""#include <jni.h>
+          #include <string>
+          #include "whisper.h"
+
+          static jstring transcribeNative(JNIEnv *env, jclass, jstring model_path_j, jfloatArray pcm_j) {{
+              const char *model_path = env->GetStringUTFChars(model_path_j, nullptr);
+              struct whisper_context_params cparams = whisper_context_default_params();
+              struct whisper_context *ctx = whisper_init_from_file_with_params(model_path, cparams);
+              env->ReleaseStringUTFChars(model_path_j, model_path);
+              if (!ctx) return env->NewStringUTF("");
+
+              jsize n_samples = env->GetArrayLength(pcm_j);
+              jfloat *pcm_data = env->GetFloatArrayElements(pcm_j, nullptr);
+
+              struct whisper_full_params wparams = whisper_full_default_params(WHISPER_SAMPLING_GREEDY);
+              wparams.print_progress = false;
+              wparams.print_special = false;
+              wparams.print_realtime = false;
+              wparams.print_timestamps = false;
+              wparams.n_threads = 4;
+
+              std::string out_text = "";
+              if (whisper_full(ctx, wparams, pcm_data, n_samples) == 0) {{
+                  int n_seg = whisper_full_n_segments(ctx);
+                  for (int i = 0; i < n_seg; ++i) {{
+                      const char *seg = whisper_full_get_segment_text(ctx, i);
+                      if (seg) out_text += seg;
+                  }}
+              }}
+
+              env->ReleaseFloatArrayElements(pcm_j, pcm_data, JNI_ABORT);
+              whisper_free(ctx);
+              return env->NewStringUTF(out_text.c_str());
+          }}
+
+          extern "C" JNIEXPORT jint JNICALL JNI_OnLoad(JavaVM* vm, void*) {{
+              JNIEnv* env = nullptr;
+              if (vm->GetEnv(reinterpret_cast<void**>(&env), JNI_VERSION_1_6) != JNI_OK) return JNI_ERR;
+              jclass clazz = env->FindClass("{pkg_slash}/WhisperBridge");
+              if (!clazz) return JNI_ERR;
+              JNINativeMethod methods[] = {{
+                  {{"transcribe", "(Ljava/lang/String;[F)Ljava/lang/String;", reinterpret_cast<void*>(transcribeNative)}}
+              }};
+              if (env->RegisterNatives(clazz, methods, 1) < 0) return JNI_ERR;
+              return JNI_VERSION_1_6;
+          }}
+          """
+          with open('/tmp/wcpp/whisper_jni.cpp', 'w') as f:
+              f.write(cpp_code)
+
+          cmake_code = """cmake_minimum_required(VERSION 3.10)
+          project(whisper_jni C CXX)
+          set(CMAKE_C_STANDARD 11)
+          set(CMAKE_CXX_STANDARD 17)
+          add_compile_options(-O3 -DNDEBUG -fPIC -pthread -D_GNU_SOURCE)
+          add_library(whisper_jni SHARED
+              ggml.c
+              ggml-alloc.c
+              ggml-backend.c
+              ggml-quants.c
+              whisper.cpp
+              whisper_jni.cpp
+          )
+          target_include_directories(whisper_jni PRIVATE .)
+          target_link_libraries(whisper_jni log android m)
+          """
+          with open('/tmp/wcpp/CMakeLists.txt', 'w') as f:
+              f.write(cmake_code)
 
           kt_src = """import android.app.Activity
           import android.content.ContentValues
@@ -91,6 +156,13 @@ jobs:
           import java.nio.ByteBuffer
           import java.nio.ByteOrder
           import java.util.*
+
+          class WhisperBridge {
+              companion object {
+                  init { System.loadLibrary("whisper_jni") }
+                  @JvmStatic external fun transcribe(modelPath: String, samples: FloatArray): String
+              }
+          }
 
           class MainActivity: FlutterActivity(), TextToSpeech.OnInitListener {
               private val CH = "com.waiyan.burmesepodcast/file_picker"
@@ -118,17 +190,11 @@ jobs:
                               val modPath = call.argument<String>("modelPath") ?: ""
                               Thread {
                                   try {
-                                      val wav = File(cacheDir, "in16k.wav")
-                                      convertToWav(mPath, wav)
-                                      val bin = applicationInfo.nativeLibraryDir + "/libwhisper.so"
-                                      File(bin).setExecutable(true)
-                                      val p = ProcessBuilder(bin, "-m", modPath, "-f", wav.absolutePath, "-nt", "-t", "4").start()
-                                      val out = p.inputStream.bufferedReader().readText().trim()
-                                      val err = p.errorStream.bufferedReader().readText().trim()
-                                      p.waitFor()
+                                      val pcm = decodeTo16kFloat(mPath)
+                                      val out = WhisperBridge.transcribe(modPath, pcm).trim()
                                       runOnUiThread {
                                           if (out.isNotEmpty()) res.success(out)
-                                          else res.error("STT_EMPTY", err.takeLast(250), null)
+                                          else res.error("EMPTY", "No speech detected", null)
                                       }
                                   } catch (e: Exception) {
                                       runOnUiThread { res.error("STT_ERR", e.localizedMessage ?: "Error", null) }
@@ -248,7 +314,7 @@ jobs:
                   } catch (_: Exception) { return src.absolutePath }
               }
 
-              private fun convertToWav(inPath: String, outWav: File) {
+              private fun decodeTo16kFloat(inPath: String): FloatArray {
                   val ex = MediaExtractor().apply { setDataSource(inPath) }
                   var idx = -1
                   var fmt: MediaFormat? = null
@@ -265,7 +331,7 @@ jobs:
                   dec.start()
                   var sr = if (fmt.containsKey(MediaFormat.KEY_SAMPLE_RATE)) fmt.getInteger(MediaFormat.KEY_SAMPLE_RATE) else 44100
                   var ch = if (fmt.containsKey(MediaFormat.KEY_CHANNEL_COUNT)) fmt.getInteger(MediaFormat.KEY_CHANNEL_COUNT) else 1
-                  val pcm = ByteArrayOutputStream()
+                  val samples = ArrayList<Float>(16000 * 30)
                   val info = MediaCodec.BufferInfo()
                   var done = false
                   while (!done) {
@@ -279,22 +345,22 @@ jobs:
                       val outIdx = dec.dequeueOutputBuffer(info, 10000)
                       if (outIdx >= 0) {
                           val b = dec.getOutputBuffer(outIdx)!!
-                          val chunk = ByteArray(info.size)
-                          b.get(chunk); b.clear()
                           if (info.size > 0) {
+                              val chunk = ByteArray(info.size)
+                              b.get(chunk); b.clear()
                               val sb = ByteBuffer.wrap(chunk).order(ByteOrder.LITTLE_ENDIAN).asShortBuffer()
                               val frames = sb.remaining() / ch
                               val step = sr.toDouble() / 16000.0
                               var pos = 0.0
-                              val ob = ByteBuffer.allocate((frames / step + 4).toInt() * 2).order(ByteOrder.LITTLE_ENDIAN)
                               while (pos.toInt() < frames) {
                                   val base = pos.toInt() * ch
-                                  var sum = 0
-                                  for (c in 0 until ch) if (base + c < sb.limit()) sum += sb.get(base + c).toInt()
-                                  ob.putShort((sum / ch).toShort())
+                                  var sum = 0f
+                                  for (c in 0 until ch) {
+                                      if (base + c < sb.limit()) sum += sb.get(base + c).toFloat() / 32768.0f
+                                  }
+                                  samples.add(sum / ch.toFloat())
                                   pos += step
                               }
-                              pcm.write(ob.array(), 0, ob.position())
                           }
                           dec.releaseOutputBuffer(outIdx, false)
                           if ((info.flags and MediaCodec.BUFFER_FLAG_END_OF_STREAM) != 0) done = true
@@ -305,13 +371,9 @@ jobs:
                       }
                   }
                   dec.stop(); dec.release(); ex.release()
-                  val raw = pcm.toByteArray()
-                  val hdr = ByteBuffer.allocate(44).order(ByteOrder.LITTLE_ENDIAN).apply {
-                      put("RIFF".toByteArray()); putInt(36 + raw.size); put("WAVEfmt ".toByteArray())
-                      putInt(16); putShort(1); putShort(1); putInt(16000); putInt(32000); putShort(2); putShort(16)
-                      put("data".toByteArray()); putInt(raw.size)
-                  }
-                  FileOutputStream(outWav).use { it.write(hdr.array()); it.write(raw) }
+                  val out = FloatArray(samples.size)
+                  for (i in samples.indices) out[i] = samples[i]
+                  return out
               }
 
               override fun onInit(status: Int) {
@@ -345,13 +407,9 @@ jobs:
           }
           """
 
-          for mf in glob.glob('android/**/MainActivity.kt', recursive=True):
-              with open(mf, 'r') as f:
-                  pkg = f.readline().strip()
-              if not pkg.startswith('package '):
-                  pkg = 'package com.waiyan.burmesepodcast.burmese_podcast'
+          for mf in mfs:
               with open(mf, 'w') as f:
-                  f.write(pkg + "\n\n" + kt_src)
+                  f.write(pkg_line + "\n\n" + kt_src)
 
           im = Image.new('RGB', (512, 512), (212, 175, 55))
           dr = ImageDraw.Draw(im)
@@ -361,14 +419,26 @@ jobs:
           dr.rectangle((244, 330, 268, 405), fill=(245, 205, 70))
           dr.rounded_rectangle((176, 395, 336, 422), radius=12, fill=(245, 205, 70))
 
+          resample_filter = getattr(Image, 'Resampling', Image).LANCZOS
           sizes = {'mipmap-mdpi': 48, 'mipmap-hdpi': 72, 'mipmap-xhdpi': 96, 'mipmap-xxhdpi': 144, 'mipmap-xxxhdpi': 192}
           for folder, sz in sizes.items():
               p = os.path.join('android/app/src/main/res', folder)
               os.makedirs(p, exist_ok=True)
-              ic = im.resize((sz, sz), Image.Resampling.LANCZOS)
+              ic = im.resize((sz, sz), resample_filter)
               for fn in ('ic_launcher.png', 'ic_launcher_round.png', 'wy_launcher.png'):
                   ic.save(os.path.join(p, fn), 'PNG')
           EOF
+
+          NDK_PATH=$(ls -d $ANDROID_HOME/ndk/* | sort -V | tail -n 1)
+          cmake -GNinja -B /tmp/wcpp/build -S /tmp/wcpp \
+            -DCMAKE_TOOLCHAIN_FILE="$NDK_PATH/build/cmake/android.toolchain.cmake" \
+            -DANDROID_ABI=arm64-v8a \
+            -DANDROID_PLATFORM=android-24 \
+            -DANDROID_STL=c++_static \
+            -DCMAKE_BUILD_TYPE=Release
+          cmake --build /tmp/wcpp/build --target whisper_jni -j4
+          mkdir -p android/app/src/main/jniLibs/arm64-v8a
+          cp /tmp/wcpp/build/libwhisper_jni.so android/app/src/main/jniLibs/arm64-v8a/libwhisper_jni.so
 
       - name: Accept Android Licenses
         run: yes | flutter doctor --android-licenses || true
