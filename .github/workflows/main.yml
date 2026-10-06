@@ -28,21 +28,21 @@ jobs:
           channel: 'stable'
           cache: true
 
-      - name: Build Native Offline Whisper, TTS Engine, and Gold App Icon
+      - name: Build Native Engines and Gold App Icon
         run: |
           sudo apt-get update
           sudo apt-get install -y python3-pil cmake ninja-build
           mkdir -p assets/models
           curl -L -o assets/models/ggml-tiny.bin https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-tiny.bin
           rm -rf android test pubspec.lock
-          printf "name: burmese_podcast\ndescription: WY Podcast Studio\npublish_to: 'none'\nversion: 1.0.0+1\n\nenvironment:\n  sdk: '>=3.0.0 <4.0.0'\n\ndependencies:\n  flutter:\n    sdk: flutter\n\nflutter:\n  uses-material-design: true\n  assets:\n    - assets/models/ggml-tiny.bin\n" > pubspec.yaml
+          printf "name: burmese_podcast\ndescription: WY Podcast\npublish_to: 'none'\nversion: 1.0.0+1\n\nenvironment:\n  sdk: '>=3.0.0 <4.0.0'\n\ndependencies:\n  flutter:\n    sdk: flutter\n\nflutter:\n  uses-material-design: true\n  assets:\n    - assets/models/ggml-tiny.bin\n" > pubspec.yaml
           flutter pub get
           flutter create . --platforms=android --org com.waiyan.burmesepodcast
 
-          NDK_DIR=$(ls -d $ANDROID_HOME/ndk/* | sort -V | tail -n 1)
-          git clone --depth 1 --branch v1.5.4 https://github.com/ggerganov/whisper.cpp.git /tmp/whisper
-          cmake -GNinja -B /tmp/whisper/build -S /tmp/whisper \
-            -DCMAKE_TOOLCHAIN_FILE="$NDK_DIR/build/cmake/android.toolchain.cmake" \
+          NDK_PATH=$(ls -d $ANDROID_HOME/ndk/* | sort -V | tail -n 1)
+          git clone --depth 1 --branch v1.5.4 https://github.com/ggerganov/whisper.cpp.git /tmp/wcpp
+          cmake -GNinja -B /tmp/wcpp/build -S /tmp/wcpp \
+            -DCMAKE_TOOLCHAIN_FILE="$NDK_PATH/build/cmake/android.toolchain.cmake" \
             -DANDROID_ABI=arm64-v8a \
             -DANDROID_PLATFORM=android-24 \
             -DANDROID_STL=c++_static \
@@ -50,9 +50,9 @@ jobs:
             -DWHISPER_BUILD_EXAMPLES=ON \
             -DBUILD_SHARED_LIBS=OFF \
             -DCMAKE_BUILD_TYPE=Release
-          cmake --build /tmp/whisper/build --target main -j4
+          cmake --build /tmp/wcpp/build --target main -j4
           mkdir -p android/app/src/main/jniLibs/arm64-v8a
-          cp /tmp/whisper/build/bin/main android/app/src/main/jniLibs/arm64-v8a/libwhisper.so
+          cp /tmp/wcpp/build/bin/main android/app/src/main/jniLibs/arm64-v8a/libwhisper.so
 
           sed -i 's/android:label="burmese_podcast"/android:label="WY'\''s PODCAST"/g' android/app/src/main/AndroidManifest.xml
           sed -i 's/android:icon="@mipmap\/ic_launcher"/android:icon="@mipmap\/ic_launcher" android:roundIcon="@mipmap\/ic_launcher_round" android:extractNativeLibs="true"/g' android/app/src/main/AndroidManifest.xml
@@ -66,22 +66,17 @@ jobs:
           mp = 'android/app/src/main/AndroidManifest.xml'
           if os.path.exists(mp):
               with open(mp, 'r') as f:
-                  mc = f.read()
-              ex = '<queries><intent><action android:name="android.intent.action.TTS_SERVICE" /></intent></queries>\n    <uses-permission android:name="android.permission.INTERNET" />\n    <uses-permission android:name="android.permission.READ_EXTERNAL_STORAGE" />\n    <uses-permission android:name="android.permission.WRITE_EXTERNAL_STORAGE" />\n    <application'
+                  txt = f.read()
+              perm = '<queries><intent><action android:name="android.intent.action.TTS_SERVICE" /></intent></queries>\n    <uses-permission android:name="android.permission.INTERNET" />\n    <uses-permission android:name="android.permission.READ_EXTERNAL_STORAGE" />\n    <uses-permission android:name="android.permission.WRITE_EXTERNAL_STORAGE" />\n    <application'
               with open(mp, 'w') as f:
-                  f.write(mc.replace('<application', ex, 1))
+                  f.write(txt.replace('<application', perm, 1))
 
-          kt = """import android.app.Activity
+          kt_src = """import android.app.Activity
           import android.content.ContentValues
           import android.content.Intent
-          import android.media.MediaCodec
-          import android.media.MediaExtractor
-          import android.media.MediaFormat
-          import android.media.MediaPlayer
+          import android.media.*
           import android.net.Uri
-          import android.os.Build
-          import android.os.Bundle
-          import android.os.Environment
+          import android.os.*
           import android.provider.MediaStore
           import android.provider.OpenableColumns
           import android.speech.tts.TextToSpeech
@@ -89,380 +84,290 @@ jobs:
           import io.flutter.embedding.android.FlutterActivity
           import io.flutter.embedding.engine.FlutterEngine
           import io.flutter.plugin.common.MethodChannel
-          import java.io.ByteArrayOutputStream
-          import java.io.File
-          import java.io.FileOutputStream
-          import java.io.RandomAccessFile
+          import java.io.*
           import java.net.HttpURLConnection
           import java.net.URL
           import java.net.URLEncoder
           import java.nio.ByteBuffer
           import java.nio.ByteOrder
-          import java.util.HashMap
-          import java.util.Locale
+          import java.util.*
 
           class MainActivity: FlutterActivity(), TextToSpeech.OnInitListener {
-              private val CHANNEL = "com.waiyan.burmesepodcast/file_picker"
-              private var pendingResult: MethodChannel.Result? = null
-              private val PICK_CODE = 9001
+              private val CH = "com.waiyan.burmesepodcast/file_picker"
+              private var pending: MethodChannel.Result? = null
               private var tts: TextToSpeech? = null
-              private var ttsReady = false
-              private var mediaPlayer: MediaPlayer? = null
+              private var ttsOk = false
+              private var player: MediaPlayer? = null
 
               override fun configureFlutterEngine(flutterEngine: FlutterEngine) {
                   super.configureFlutterEngine(flutterEngine)
                   tts = TextToSpeech(this, this)
-                  MethodChannel(flutterEngine.dartExecutor.binaryMessenger, CHANNEL).setMethodCallHandler { call, result ->
+                  MethodChannel(flutterEngine.dartExecutor.binaryMessenger, CH).setMethodCallHandler { call, res ->
                       when (call.method) {
                           "pickFile" -> {
-                              pendingResult = result
+                              pending = res
                               val mime = call.argument<String>("mimeType") ?: "*/*"
-                              val intent = Intent(Intent.ACTION_GET_CONTENT).apply {
+                              val i = Intent(Intent.ACTION_GET_CONTENT).apply {
                                   type = mime
                                   addCategory(Intent.CATEGORY_OPENABLE)
                               }
-                              startActivityForResult(Intent.createChooser(intent, "Select File"), PICK_CODE)
+                              startActivityForResult(Intent.createChooser(i, "Select"), 9001)
                           }
                           "transcribeOffline" -> {
-                              val mediaPath = call.argument<String>("path") ?: ""
-                              val modelPath = call.argument<String>("modelPath") ?: ""
+                              val mPath = call.argument<String>("path") ?: ""
+                              val modPath = call.argument<String>("modelPath") ?: ""
                               Thread {
                                   try {
-                                      val wavFile = File(cacheDir, "whisper_16k.wav")
-                                      decodeTo16kWav(mediaPath, wavFile)
-                                      val libPath = applicationInfo.nativeLibraryDir + "/libwhisper.so"
-                                      File(libPath).setExecutable(true)
-                                      val pb = ProcessBuilder(libPath, "-m", modelPath, "-f", wavFile.absolutePath, "-nt", "-t", "4")
-                                      val proc = pb.start()
-                                      val out = proc.inputStream.bufferedReader().readText().trim()
-                                      val err = proc.errorStream.bufferedReader().readText().trim()
-                                      proc.waitFor()
-                                      if (out.isNotEmpty()) {
-                                          runOnUiThread { result.success(out) }
-                                      } else {
-                                          runOnUiThread { result.error("WHISPER_EMPTY", err.takeLast(300), null) }
+                                      val wav = File(cacheDir, "in16k.wav")
+                                      convertToWav(mPath, wav)
+                                      val bin = applicationInfo.nativeLibraryDir + "/libwhisper.so"
+                                      File(bin).setExecutable(true)
+                                      val p = ProcessBuilder(bin, "-m", modPath, "-f", wav.absolutePath, "-nt", "-t", "4").start()
+                                      val out = p.inputStream.bufferedReader().readText().trim()
+                                      val err = p.errorStream.bufferedReader().readText().trim()
+                                      p.waitFor()
+                                      runOnUiThread {
+                                          if (out.isNotEmpty()) res.success(out)
+                                          else res.error("STT_EMPTY", err.takeLast(250), null)
                                       }
                                   } catch (e: Exception) {
-                                      runOnUiThread { result.error("STT_ERR", e.localizedMessage ?: "Decode error", null) }
+                                      runOnUiThread { res.error("STT_ERR", e.localizedMessage ?: "Error", null) }
                                   }
                               }.start()
                           }
                           "generateTTS" -> {
                               val text = call.argument<String>("text") ?: ""
-                              val speed = call.argument<Double>("speed") ?: 1.0
-                              val cloudBytes = call.argument<ByteArray>("cloudBytes")
+                              val spd = call.argument<Double>("speed") ?: 1.0
+                              val cloud = call.argument<ByteArray>("cloudBytes")
                               Thread {
                                   try {
-                                      val stamp = System.currentTimeMillis()
-                                      if (cloudBytes != null && cloudBytes.isNotEmpty()) {
-                                          val fn = "WY_Podcast_$stamp.wav"
-                                          val f = File(cacheDir, fn)
-                                          f.writeBytes(cloudBytes)
-                                          val pub = saveToDownloads(f, fn, "audio/wav")
-                                          runOnUiThread { result.success(mapOf("local" to f.absolutePath, "public" to pub)) }
+                                      val ts = System.currentTimeMillis()
+                                      if (cloud != null && cloud.isNotEmpty()) {
+                                          val fn = "WY_Podcast_$ts.wav"
+                                          val f = File(cacheDir, fn).apply { writeBytes(cloud) }
+                                          val pub = copyToDl(f, fn, "audio/wav")
+                                          runOnUiThread { res.success(mapOf("local" to f.absolutePath, "public" to pub)) }
                                           return@Thread
                                       }
-                                      val mp3Bytes = fetchTranslateTTS(text)
-                                      if (mp3Bytes != null && mp3Bytes.isNotEmpty()) {
-                                          val fn = "WY_Podcast_$stamp.mp3"
-                                          val f = File(cacheDir, fn)
-                                          f.writeBytes(mp3Bytes)
-                                          val pub = saveToDownloads(f, fn, "audio/mpeg")
-                                          runOnUiThread { result.success(mapOf("local" to f.absolutePath, "public" to pub)) }
+                                      val mp3 = webTtsMerged(text)
+                                      if (mp3 != null && mp3.isNotEmpty()) {
+                                          val fn = "WY_Podcast_$ts.mp3"
+                                          val f = File(cacheDir, fn).apply { writeBytes(mp3) }
+                                          val pub = copyToDl(f, fn, "audio/mpeg")
+                                          runOnUiThread { res.success(mapOf("local" to f.absolutePath, "public" to pub)) }
                                           return@Thread
                                       }
-                                      if (ttsReady && tts != null) {
-                                          val fn = "WY_Podcast_$stamp.wav"
+                                      if (ttsOk && tts != null) {
+                                          val fn = "WY_Podcast_$ts.wav"
                                           val f = File(cacheDir, fn)
-                                          val safe = if (text.length > 3900) text.substring(0, 3900) else text
-                                          tts?.setSpeechRate(speed.toFloat())
-                                          val uid = "WY_$stamp"
+                                          val sub = if (text.length > 3900) text.substring(0, 3900) else text
+                                          tts?.setSpeechRate(spd.toFloat())
                                           tts?.setOnUtteranceProgressListener(object : UtteranceProgressListener() {
                                               override fun onStart(id: String?) {}
                                               override fun onDone(id: String?) {
-                                                  val pub = saveToDownloads(f, fn, "audio/wav")
-                                                  runOnUiThread { result.success(mapOf("local" to f.absolutePath, "public" to pub)) }
+                                                  val pub = copyToDl(f, fn, "audio/wav")
+                                                  runOnUiThread { res.success(mapOf("local" to f.absolutePath, "public" to pub)) }
                                               }
                                               override fun onError(id: String?) {
-                                                  runOnUiThread { result.error("TTS_ERR", "Native TTS failed", null) }
+                                                  runOnUiThread { res.error("TTS_ERR", "Synth error", null) }
                                               }
                                           })
-                                          tts?.synthesizeToFile(safe, Bundle(), f, uid)
+                                          tts?.synthesizeToFile(sub, Bundle(), f, "U_$ts")
                                       } else {
-                                          runOnUiThread { result.error("TTS_FAIL", "TTS Engine unavailable", null) }
+                                          runOnUiThread { res.error("NO_TTS", "TTS not ready", null) }
                                       }
                                   } catch (e: Exception) {
-                                      runOnUiThread { result.error("TTS_EX", e.localizedMessage, null) }
+                                      runOnUiThread { res.error("EX", e.localizedMessage, null) }
                                   }
                               }.start()
                           }
                           "playAudio" -> {
-                              val path = call.argument<String>("path") ?: ""
+                              val p = call.argument<String>("path") ?: ""
                               try {
-                                  mediaPlayer?.stop()
-                                  mediaPlayer?.release()
-                                  mediaPlayer = MediaPlayer().apply {
-                                      setDataSource(path)
+                                  player?.release()
+                                  player = MediaPlayer().apply {
+                                      setDataSource(p)
                                       prepare()
                                       start()
                                   }
-                                  result.success(true)
+                                  res.success(true)
                               } catch (e: Exception) {
-                                  result.error("PLAY_ERR", e.localizedMessage, null)
+                                  res.error("PLAY", e.localizedMessage, null)
                               }
                           }
                           "stopAudio" -> {
-                              try {
-                                  mediaPlayer?.stop()
-                                  mediaPlayer?.release()
-                                  mediaPlayer = null
-                              } catch (_: Exception) {}
-                              result.success(true)
+                              try { player?.stop(); player?.release(); player = null } catch (_: Exception) {}
+                              res.success(true)
                           }
-                          else -> result.notImplemented()
+                          else -> res.notImplemented()
                       }
                   }
               }
 
-              private fun fetchTranslateTTS(text: String): ByteArray? {
+              private fun webTtsMerged(txt: String): ByteArray? {
                   return try {
-                      val out = ByteArrayOutputStream()
-                      val words = text.replace("\\n", " ").split(" ")
-                      val chunks = mutableListOf<String>()
-                      var cur = StringBuilder()
-                      for (w in words) {
-                          if (cur.length + w.length + 1 > 160) {
-                              if (cur.isNotEmpty()) chunks.add(cur.toString())
-                              cur = StringBuilder(w)
-                          } else {
-                              if (cur.isNotEmpty()) cur.append(" ")
-                              cur.append(w)
+                      val bos = ByteArrayOutputStream()
+                      val parts = txt.replace("\\n", " ").chunked(150)
+                      for (part in parts) {
+                          val s = part.trim()
+                          if (s.isEmpty()) continue
+                          val lang = if (s.any { it.code in 0x1000..0x109F }) "my" else "en"
+                          val q = URLEncoder.encode(s, "UTF-8")
+                          val conn = (URL("https://translate.google.com/translate_tts?ie=UTF-8&client=tw-ob&tl=$lang&q=$q").openConnection() as HttpURLConnection).apply {
+                              setRequestProperty("User-Agent", "Mozilla/5.0")
+                              connectTimeout = 10000
+                              readTimeout = 10000
                           }
+                          if (conn.responseCode == 200) conn.inputStream.use { it.copyTo(bos) }
+                          conn.disconnect()
                       }
-                      if (cur.isNotEmpty()) chunks.add(cur.toString())
-                      for (c in chunks) {
-                          val sub = if (c.length > 180) c.chunked(160) else listOf(c)
-                          for (s in sub) {
-                              val trimmed = s.trim()
-                              if (trimmed.isEmpty()) continue
-                              val isMy = trimmed.any { it.code in 0x1000..0x109F }
-                              val tl = if (isMy) "my" else "en"
-                              val q = URLEncoder.encode(trimmed, "UTF-8")
-                              val u = URL("https://translate.google.com/translate_tts?ie=UTF-8&client=tw-ob&tl=$tl&q=$q")
-                              val conn = (u.openConnection() as HttpURLConnection).apply {
-                                  requestMethod = "GET"
-                                  setRequestProperty("User-Agent", "Mozilla/5.0")
-                                  connectTimeout = 10000
-                                  readTimeout = 10000
-                              }
-                              if (conn.responseCode == 200) {
-                                  conn.inputStream.use { inp -> inp.copyTo(out) }
-                              }
-                              conn.disconnect()
-                          }
-                      }
-                      val bytes = out.toByteArray()
-                      if (bytes.isNotEmpty()) bytes else null
-                  } catch (_: Exception) {
-                      null
-                  }
+                      val arr = bos.toByteArray()
+                      if (arr.isNotEmpty()) arr else null
+                  } catch (_: Exception) { null }
               }
 
-              private fun saveToDownloads(srcFile: File, fileName: String, mime: String): String {
+              private fun copyToDl(src: File, fn: String, mime: String): String {
                   try {
                       if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-                          val values = ContentValues().apply {
-                              put(MediaStore.Downloads.DISPLAY_NAME, fileName)
+                          val cv = ContentValues().apply {
+                              put(MediaStore.Downloads.DISPLAY_NAME, fn)
                               put(MediaStore.Downloads.MIME_TYPE, mime)
                               put(MediaStore.Downloads.RELATIVE_PATH, Environment.DIRECTORY_DOWNLOADS)
                           }
-                          val uri = contentResolver.insert(MediaStore.Downloads.EXTERNAL_CONTENT_URI, values)
-                          if (uri != null) {
-                              contentResolver.openOutputStream(uri)?.use { out ->
-                                  srcFile.inputStream().use { inp -> inp.copyTo(out) }
-                              }
-                              return "/storage/emulated/0/Download/$fileName"
+                          val u = contentResolver.insert(MediaStore.Downloads.EXTERNAL_CONTENT_URI, cv)
+                          if (u != null) {
+                              contentResolver.openOutputStream(u)?.use { o -> src.inputStream().use { it.copyTo(o) } }
+                              return "/storage/emulated/0/Download/$fn"
                           }
                       }
-                      val dlDir = Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOWNLOADS)
-                      if (!dlDir.exists()) dlDir.mkdirs()
-                      val dest = File(dlDir, fileName)
-                      srcFile.copyTo(dest, overwrite = true)
-                      return dest.absolutePath
-                  } catch (_: Exception) {
-                      return srcFile.absolutePath
-                  }
+                      val d = Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOWNLOADS)
+                      d.mkdirs()
+                      val dst = File(d, fn)
+                      src.copyTo(dst, overwrite = true)
+                      return dst.absolutePath
+                  } catch (_: Exception) { return src.absolutePath }
               }
 
-              private fun decodeTo16kWav(inputPath: String, outWav: File) {
-                  val extractor = MediaExtractor()
-                  extractor.setDataSource(inputPath)
-                  var trackIndex = -1
-                  var format: MediaFormat? = null
-                  for (i in 0 until extractor.trackCount) {
-                      val f = extractor.getTrackFormat(i)
-                      val mime = f.getString(MediaFormat.KEY_MIME) ?: ""
-                      if (mime.startsWith("audio/")) {
-                          trackIndex = i
-                          format = f
-                          break
+              private fun convertToWav(inPath: String, outWav: File) {
+                  val ex = MediaExtractor().apply { setDataSource(inPath) }
+                  var idx = -1
+                  var fmt: MediaFormat? = null
+                  for (i in 0 until ex.trackCount) {
+                      val f = ex.getTrackFormat(i)
+                      if ((f.getString(MediaFormat.KEY_MIME) ?: "").startsWith("audio/")) {
+                          idx = i; fmt = f; break
                       }
                   }
-                  if (trackIndex < 0 || format == null) throw Exception("No audio track found")
-                  extractor.selectTrack(trackIndex)
-                  val mime = format.getString(MediaFormat.KEY_MIME)!!
-                  val codec = MediaCodec.createDecoderByType(mime)
-                  codec.configure(format, null, null, 0)
-                  codec.start()
-
-                  var sampleRate = if (format.containsKey(MediaFormat.KEY_SAMPLE_RATE)) format.getInteger(MediaFormat.KEY_SAMPLE_RATE) else 44100
-                  var channels = if (format.containsKey(MediaFormat.KEY_CHANNEL_COUNT)) format.getInteger(MediaFormat.KEY_CHANNEL_COUNT) else 1
-
-                  val rawPcm = ByteArrayOutputStream()
+                  if (idx < 0 || fmt == null) throw Exception("No audio track")
+                  ex.selectTrack(idx)
+                  val dec = MediaCodec.createDecoderByType(fmt.getString(MediaFormat.KEY_MIME)!!)
+                  dec.configure(fmt, null, null, 0)
+                  dec.start()
+                  var sr = if (fmt.containsKey(MediaFormat.KEY_SAMPLE_RATE)) fmt.getInteger(MediaFormat.KEY_SAMPLE_RATE) else 44100
+                  var ch = if (fmt.containsKey(MediaFormat.KEY_CHANNEL_COUNT)) fmt.getInteger(MediaFormat.KEY_CHANNEL_COUNT) else 1
+                  val pcm = ByteArrayOutputStream()
                   val info = MediaCodec.BufferInfo()
-                  var eos = false
-                  while (!eos) {
-                      val inIdx = codec.dequeueInputBuffer(10000)
-                      if (inIdx >= 0) {
-                          val buf = codec.getInputBuffer(inIdx)!!
-                          val sz = extractor.readSampleData(buf, 0)
-                          if (sz < 0) {
-                              codec.queueInputBuffer(inIdx, 0, 0, 0, MediaCodec.BUFFER_FLAG_END_OF_STREAM)
-                          } else {
-                              codec.queueInputBuffer(inIdx, 0, sz, extractor.sampleTime, 0)
-                              extractor.advance()
-                          }
+                  var done = false
+                  while (!done) {
+                      val inBufIdx = dec.dequeueInputBuffer(10000)
+                      if (inBufIdx >= 0) {
+                          val b = dec.getInputBuffer(inBufIdx)!!
+                          val sz = ex.readSampleData(b, 0)
+                          if (sz < 0) dec.queueInputBuffer(inBufIdx, 0, 0, 0, MediaCodec.BUFFER_FLAG_END_OF_STREAM)
+                          else { dec.queueInputBuffer(inBufIdx, 0, sz, ex.sampleTime, 0); ex.advance() }
                       }
-                      val outIdx = codec.dequeueOutputBuffer(info, 10000)
+                      val outIdx = dec.dequeueOutputBuffer(info, 10000)
                       if (outIdx >= 0) {
-                          val outBuf = codec.getOutputBuffer(outIdx)!!
+                          val b = dec.getOutputBuffer(outIdx)!!
                           val chunk = ByteArray(info.size)
-                          outBuf.get(chunk)
-                          outBuf.clear()
+                          b.get(chunk); b.clear()
                           if (info.size > 0) {
-                              val sBuf = ByteBuffer.wrap(chunk).order(ByteOrder.LITTLE_ENDIAN).asShortBuffer()
-                              val numSamples = sBuf.remaining() / channels
-                              val step = sampleRate.toDouble() / 16000.0
+                              val sb = ByteBuffer.wrap(chunk).order(ByteOrder.LITTLE_ENDIAN).asShortBuffer()
+                              val frames = sb.remaining() / ch
+                              val step = sr.toDouble() / 16000.0
                               var pos = 0.0
-                              val outByteBuf = ByteBuffer.allocate((numSamples / step + 4).toInt() * 2).order(ByteOrder.LITTLE_ENDIAN)
-                              while (pos.toInt() < numSamples) {
-                                  val idx = pos.toInt() * channels
+                              val ob = ByteBuffer.allocate((frames / step + 4).toInt() * 2).order(ByteOrder.LITTLE_ENDIAN)
+                              while (pos.toInt() < frames) {
+                                  val base = pos.toInt() * ch
                                   var sum = 0
-                                  for (c in 0 until channels) {
-                                      if (idx + c < sBuf.limit()) sum += sBuf.get(idx + c).toInt()
-                                  }
-                                  outByteBuf.putShort((sum / channels).toShort())
+                                  for (c in 0 until ch) if (base + c < sb.limit()) sum += sb.get(base + c).toInt()
+                                  ob.putShort((sum / ch).toShort())
                                   pos += step
                               }
-                              rawPcm.write(outByteBuf.array(), 0, outByteBuf.position())
+                              pcm.write(ob.array(), 0, ob.position())
                           }
-                          codec.releaseOutputBuffer(outIdx, false)
-                          if ((info.flags and MediaCodec.BUFFER_FLAG_END_OF_STREAM) != 0) eos = true
+                          dec.releaseOutputBuffer(outIdx, false)
+                          if ((info.flags and MediaCodec.BUFFER_FLAG_END_OF_STREAM) != 0) done = true
                       } else if (outIdx == MediaCodec.INFO_OUTPUT_FORMAT_CHANGED) {
-                          val nf = codec.outputFormat
-                          if (nf.containsKey(MediaFormat.KEY_SAMPLE_RATE)) sampleRate = nf.getInteger(MediaFormat.KEY_SAMPLE_RATE)
-                          if (nf.containsKey(MediaFormat.KEY_CHANNEL_COUNT)) channels = nf.getInteger(MediaFormat.KEY_CHANNEL_COUNT)
+                          val nf = dec.outputFormat
+                          if (nf.containsKey(MediaFormat.KEY_SAMPLE_RATE)) sr = nf.getInteger(MediaFormat.KEY_SAMPLE_RATE)
+                          if (nf.containsKey(MediaFormat.KEY_CHANNEL_COUNT)) ch = nf.getInteger(MediaFormat.KEY_CHANNEL_COUNT)
                       }
                   }
-                  codec.stop()
-                  codec.release()
-                  extractor.release()
-
-                  val pcmBytes = rawPcm.toByteArray()
-                  val header = ByteBuffer.allocate(44).order(ByteOrder.LITTLE_ENDIAN)
-                  header.put("RIFF".toByteArray())
-                  header.putInt(36 + pcmBytes.size)
-                  header.put("WAVEfmt ".toByteArray())
-                  header.putInt(16)
-                  header.putShort(1)
-                  header.putShort(1)
-                  header.putInt(16000)
-                  header.putInt(32000)
-                  header.putShort(2)
-                  header.putShort(16)
-                  header.put("data".toByteArray())
-                  header.putInt(pcmBytes.size)
-                  FileOutputStream(outWav).use { fos ->
-                      fos.write(header.array())
-                      fos.write(pcmBytes)
+                  dec.stop(); dec.release(); ex.release()
+                  val raw = pcm.toByteArray()
+                  val hdr = ByteBuffer.allocate(44).order(ByteOrder.LITTLE_ENDIAN).apply {
+                      put("RIFF".toByteArray()); putInt(36 + raw.size); put("WAVEfmt ".toByteArray())
+                      putInt(16); putShort(1); putShort(1); putInt(16000); putInt(32000); putShort(2); putShort(16)
+                      put("data".toByteArray()); putInt(raw.size)
                   }
+                  FileOutputStream(outWav).use { it.write(hdr.array()); it.write(raw) }
               }
 
               override fun onInit(status: Int) {
                   if (status == TextToSpeech.SUCCESS) {
-                      val myLoc = Locale("my", "MM")
-                      val res = tts?.isLanguageAvailable(myLoc) ?: TextToSpeech.LANG_NOT_SUPPORTED
-                      if (res >= TextToSpeech.LANG_AVAILABLE) {
-                          tts?.language = myLoc
-                      } else {
-                          tts?.language = Locale.US
-                      }
-                      ttsReady = true
+                      tts?.language = Locale.US
+                      ttsOk = true
                   }
               }
 
-              override fun onActivityResult(requestCode: Int, resultCode: Int, data: Intent?) {
-                  super.onActivityResult(requestCode, resultCode, data)
-                  if (requestCode == PICK_CODE) {
-                      val res = pendingResult
-                      pendingResult = null
-                      if (resultCode == Activity.RESULT_OK && data?.data != null) {
-                          val uri: Uri = data.data!!
-                          try {
-                              var name = "selected_media"
-                              contentResolver.query(uri, null, null, null, null)?.use { c ->
-                                  val idx = c.getColumnIndex(OpenableColumns.DISPLAY_NAME)
-                                  if (idx != -1 && c.moveToFirst()) name = c.getString(idx) ?: "selected_media"
-                              }
-                              val out = File(cacheDir, name)
-                              contentResolver.openInputStream(uri)?.use { inp ->
-                                  FileOutputStream(out).use { o -> inp.copyTo(o) }
-                              }
-                              val map = HashMap<String, String>()
-                              map["name"] = name
-                              map["path"] = out.absolutePath
-                              res?.success(map)
-                          } catch (e: Exception) {
-                              res?.error("READ_ERR", e.localizedMessage, null)
+              override fun onActivityResult(req: Int, resCode: Int, data: Intent?) {
+                  super.onActivityResult(req, resCode, data)
+                  if (req == 9001) {
+                      val r = pending; pending = null
+                      if (resCode == Activity.RESULT_OK && data?.data != null) {
+                          val u = data.data!!
+                          var name = "media"
+                          contentResolver.query(u, null, null, null, null)?.use { c ->
+                              val i = c.getColumnIndex(OpenableColumns.DISPLAY_NAME)
+                              if (i != -1 && c.moveToFirst()) name = c.getString(i) ?: "media"
                           }
-                      } else {
-                          res?.success(null)
-                      }
+                          val f = File(cacheDir, name)
+                          contentResolver.openInputStream(u)?.use { inp -> FileOutputStream(f).use { inp.copyTo(it) } }
+                          r?.success(mapOf("name" to name, "path" to f.absolutePath))
+                      } else r?.success(null)
                   }
               }
 
               override fun onDestroy() {
-                  mediaPlayer?.release()
-                  tts?.stop()
-                  tts?.shutdown()
-                  super.onDestroy()
+                  player?.release(); tts?.shutdown(); super.onDestroy()
               }
           }
           """
 
           for mf in glob.glob('android/**/MainActivity.kt', recursive=True):
               with open(mf, 'r') as f:
-                  fl = f.readline().strip()
-              if not fl.startswith('package '):
-                  fl = 'package com.waiyan.burmesepodcast.burmese_podcast'
+                  pkg = f.readline().strip()
+              if not pkg.startswith('package '):
+                  pkg = 'package com.waiyan.burmesepodcast.burmese_podcast'
               with open(mf, 'w') as f:
-                  f.write(fl + "\n\n" + kt)
+                  f.write(pkg + "\n\n" + kt_src)
 
           im = Image.new('RGB', (512, 512), (212, 175, 55))
-          draw = ImageDraw.Draw(im)
-          draw.ellipse((22, 22, 490, 490), fill=(26, 22, 18), outline=(255, 223, 100), width=16)
-          draw.rounded_rectangle((200, 95, 312, 275), radius=56, fill=(245, 205, 70))
-          draw.arc((155, 145, 357, 335), start=0, end=180, fill=(245, 205, 70), width=22)
-          draw.rectangle((244, 330, 268, 405), fill=(245, 205, 70))
-          draw.rounded_rectangle((176, 395, 336, 422), radius=12, fill=(245, 205, 70))
+          dr = ImageDraw.Draw(im)
+          dr.ellipse((22, 22, 490, 490), fill=(24, 22, 18), outline=(255, 220, 95), width=16)
+          dr.rounded_rectangle((200, 95, 312, 275), radius=56, fill=(245, 205, 70))
+          dr.arc((155, 145, 357, 335), start=0, end=180, fill=(245, 205, 70), width=22)
+          dr.rectangle((244, 330, 268, 405), fill=(245, 205, 70))
+          dr.rounded_rectangle((176, 395, 336, 422), radius=12, fill=(245, 205, 70))
 
           sizes = {'mipmap-mdpi': 48, 'mipmap-hdpi': 72, 'mipmap-xhdpi': 96, 'mipmap-xxhdpi': 144, 'mipmap-xxxhdpi': 192}
           for folder, sz in sizes.items():
               p = os.path.join('android/app/src/main/res', folder)
               os.makedirs(p, exist_ok=True)
-              resized = im.resize((sz, sz), Image.Resampling.LANCZOS)
+              ic = im.resize((sz, sz), Image.Resampling.LANCZOS)
               for fn in ('ic_launcher.png', 'ic_launcher_round.png', 'wy_launcher.png'):
-                  resized.save(os.path.join(p, fn), 'PNG')
+                  ic.save(os.path.join(p, fn), 'PNG')
           EOF
 
       - name: Accept Android Licenses
@@ -489,3 +394,4 @@ jobs:
         run: |
           gh release delete latest --cleanup-tag --yes || true
           gh release create latest output_apk/WY-Podcast.apk --title "WY's PODCAST APK" --notes "WY-Podcast.apk ကို တိုက်ရိုက် ဒေါင်းလုဒ်ဆွဲနိုင်ပါပြီ။"
+# === END OF FILE ===
