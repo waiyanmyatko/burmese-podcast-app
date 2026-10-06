@@ -16,14 +16,18 @@ const Color darkBg = Color(0xFF121214);
 const MethodChannel _channel = MethodChannel('com.waiyan.burmesepodcast/file_picker');
 
 const String kPointSystemPrompt =
-    'Transform the provided transcript into a natural Burmese single-presenter podcast script. '
-    'Preserve all key facts, explanations, examples, and cause-and-effect relationships while combining repetitive ideas naturally. '
-    'Do not use speaker labels or stage directions. If splitting is needed, use [PART X] and [MORE], continue on Next, and finish with [END OF SCRIPT].';
+    'You are a professional Burmese educational and documentary podcast script writer. '
+    'Transform the provided English transcript into a natural Burmese podcast script for ONE presenter. '
+    'Preserve all important ideas, explanations, examples, events, and cause-and-effect relationships while combining repetitive sentences naturally. '
+    'Do NOT output a short summary. Do NOT use speaker labels or stage directions. '
+    'Output in ONE response if possible; if splitting is required, use [PART X] and [MORE], continue on Next, and end with [END OF SCRIPT].';
 
 const String kLengthSystemPrompt =
-    'Transform the provided transcript into a comprehensive, detailed Burmese single-presenter documentary podcast script. '
-    'Preserve full information density, chronological scenes, supporting details, and reasoning without summarizing. '
-    'Do not use speaker labels or stage directions. If splitting is needed, use [PART X] and [MORE], continue on Next, and finish with [END OF SCRIPT].';
+    'You are a professional Burmese educational and documentary podcast script writer. '
+    'Transform the provided English transcript into a FULL, complete, natural Burmese podcast script for ONE presenter preserving the full information density of the source. '
+    'Do NOT summarize or compress away details. Always prefer the fuller version that preserves all explanations, chronological scenes, events, cause-and-effect, and conclusions. '
+    'Do NOT use speaker labels or stage directions. '
+    'Output in ONE response if possible; if splitting is required, use [PART X] and [MORE], continue on Next, and end with [END OF SCRIPT].';
 
 class WysPodcastApp extends StatelessWidget {
   const WysPodcastApp({super.key});
@@ -69,10 +73,17 @@ class _PodcastStudioScreenState extends State<PodcastStudioScreen> {
   String _style = 'Podcast (သဘာဝကျသော ဆွေးနွေးခန်းဟန်)';
   String _voice = 'Male - Puck (သွက်လက်ဖော်ရွေသော အမျိုးသားသံ)';
   double _speed = 1.0;
+
+  bool _busyScript = false;
   bool _busyTTS = false;
   String _status = '';
+
   String _audioPath = '';
+  String _publicAudioPath = '';
   bool _playing = false;
+  int _posMs = 0;
+  int _durMs = 0;
+  Timer? _playerTimer;
 
   final List<String> _styles = [
     'Podcast (သဘာဝကျသော ဆွေးနွေးခန်းဟန်)',
@@ -97,6 +108,35 @@ class _PodcastStudioScreenState extends State<PodcastStudioScreen> {
   void initState() {
     super.initState();
     _initData();
+    _playerTimer = Timer.periodic(const Duration(milliseconds: 500), (_) => _pollAudioState());
+  }
+
+  @override
+  void dispose() {
+    _playerTimer?.cancel();
+    _sttCtrl.dispose();
+    _inputCtrl.dispose();
+    _scriptCtrl.dispose();
+    super.dispose();
+  }
+
+  Future<void> _pollAudioState() async {
+    if (_audioPath.isEmpty || !mounted) return;
+    try {
+      final st = await _channel.invokeMethod('audioState');
+      if (st is Map && mounted) {
+        final p = st['playing'] == true;
+        final pos = (st['pos'] as int?) ?? 0;
+        final dur = (st['dur'] as int?) ?? 0;
+        if (p != _playing || pos != _posMs || dur != _durMs) {
+          setState(() {
+            _playing = p;
+            _posMs = pos;
+            _durMs = dur;
+          });
+        }
+      }
+    } catch (_) {}
   }
 
   Future<void> _initData() async {
@@ -118,7 +158,7 @@ class _PodcastStudioScreenState extends State<PodcastStudioScreen> {
       if (mounted && mp != null) {
         setState(() {
           _modelPath = mp.toString();
-          _modelStatus = '✓ Offline Whisper Model အသင့်ရှိသည် (75 MB)';
+          _modelStatus = '✓ Fast Offline Whisper အသင့်ရှိသည်';
         });
       }
     } catch (e) {
@@ -181,22 +221,47 @@ class _PodcastStudioScreenState extends State<PodcastStudioScreen> {
   }
 
   Future<void> _pickMedia(String mime) async {
-    final res = await _channel.invokeMethod('pickFile', {'mode': 'media', 'mimeType': mime});
+    final res = await _channel.invokeMethod('pickFile', {'mimeType': mime});
     if (res is Map && res['path'] != null) {
       setState(() => _mediaPath = res['path'].toString());
       _snack('ရွေးချယ်ပြီးပါပြီ: ${res['name']}');
     }
   }
 
+  String _decodeBytesSmart(Uint8List bytes) {
+    if (bytes.isEmpty) return '';
+    if (bytes.length >= 3 && bytes[0] == 0xEF && bytes[1] == 0xBB && bytes[2] == 0xBF) {
+      return utf8.decode(bytes.sublist(3), allowMalformed: true);
+    }
+    if (bytes.length >= 2 && bytes[0] == 0xFF && bytes[1] == 0xFE) {
+      final codes = <int>[];
+      for (int i = 2; i + 1 < bytes.length; i += 2) {
+        codes.add(bytes[i] | (bytes[i + 1] << 8));
+      }
+      return String.fromCharCodes(codes);
+    }
+    if (bytes.length >= 2 && bytes[0] == 0xFE && bytes[1] == 0xFF) {
+      final codes = <int>[];
+      for (int i = 2; i + 1 < bytes.length; i += 2) {
+        codes.add((bytes[i] << 8) | bytes[i + 1]);
+      }
+      return String.fromCharCodes(codes);
+    }
+    return utf8.decode(bytes, allowMalformed: true);
+  }
+
   Future<void> _pickTxtFile() async {
     try {
-      final res = await _channel.invokeMethod('pickFile', {'mode': 'txt', 'mimeType': '*/*'});
-      if (res is Map && res['content'] != null) {
-        setState(() => _inputCtrl.text = res['content'].toString());
-        _snack('.txt ဖိုင် (${res['name']}) မှ စာသားများ ထည့်သွင်းပြီးပါပြီ');
+      final res = await _channel.invokeMethod('pickFile', {'mimeType': 'text/*'});
+      if (res is Map && res['path'] != null) {
+        final f = File(res['path'].toString());
+        final rawBytes = await f.readAsBytes();
+        final textContent = _decodeBytesSmart(rawBytes).trim();
+        setState(() => _inputCtrl.text = textContent);
+        _snack('ဖိုင် (${res['name']}) မှ စာသားများ ထည့်သွင်းပြီးပါပြီ');
       }
     } catch (e) {
-      _snack('ဖိုင်ဖတ်ရာတွင် အမှားရှိနေပါသည်: $e');
+      _snack('.txt ဖိုင်ဖတ်ရာတွင် အမှားရှိနေပါသည်: $e');
     }
   }
 
@@ -247,41 +312,117 @@ class _PodcastStudioScreenState extends State<PodcastStudioScreen> {
     return out.isEmpty ? [txt] : out;
   }
 
+  Future<String> _callGeminiModelWithFallback(
+    HttpClient client,
+    String sysPrompt,
+    List<Map<String, dynamic>> history,
+  ) async {
+    const models = ['gemini-2.5-flash', 'gemini-2.0-flash', 'gemini-1.5-flash'];
+    String lastErr = '';
+    for (final m in models) {
+      try {
+        final req = await client.postUrl(Uri.parse(
+          'https://generativelanguage.googleapis.com/v1beta/models/$m:generateContent?key=$_apiKey',
+        ));
+        req.headers.set('Content-Type', 'application/json; charset=utf-8');
+        req.add(utf8.encode(jsonEncode({
+          'systemInstruction': {
+            'parts': [
+              {'text': sysPrompt}
+            ]
+          },
+          'contents': history,
+          'generationConfig': {'temperature': 0.4},
+        })));
+        final resp = await req.close();
+        final body = await resp.transform(utf8.decoder).join();
+        if (resp.statusCode == 200) {
+          final j = jsonDecode(body);
+          final txt = (j['candidates']?[0]?['content']?['parts']?[0]?['text'] ?? '').toString();
+          if (txt.isNotEmpty) return txt;
+        }
+        lastErr = '($m HTTP ${resp.statusCode}): $body';
+      } catch (e) {
+        lastErr = e.toString();
+      }
+    }
+    throw Exception('Gemini Script Error: $lastErr');
+  }
+
   Future<String> _transformScript(String src) async {
     final sys = _gemMode == 'For Point' ? kPointSystemPrompt : kLengthSystemPrompt;
     final parts = _chunkText(src, 12000);
     final sb = StringBuffer();
     final client = HttpClient();
 
-    for (int p = 0; p < parts.length; p++) {
-      final List<Map<String, dynamic>> history = [
-        {'role': 'user', 'parts': [{'text': '[PART ${p + 1}]\n${parts[p]}'}]}
-      ];
-      for (int step = 0; step < 10; step++) {
-        setState(() => _status = 'Gem Prompt ဖြင့် မြန်မာ Script ရေးနေသည် (Part ${p + 1}/${parts.length})...');
-        final req = await client.postUrl(Uri.parse(
-          'https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=$_apiKey',
-        ));
-        req.headers.set('Content-Type', 'application/json; charset=utf-8');
-        req.add(utf8.encode(jsonEncode({
-          'systemInstruction': {'parts': [{'text': sys}]},
-          'contents': history,
-        })));
-        final resp = await req.close();
-        final body = await resp.transform(utf8.decoder).join();
-        if (resp.statusCode != 200) throw Exception('Gemini Error (${resp.statusCode}): $body');
-        final chunk = (jsonDecode(body)['candidates']?[0]?['content']?['parts']?[0]?['text'] ?? '').toString();
-        sb.writeln(chunk);
-        if (chunk.contains('[MORE]') && !chunk.contains('[END OF SCRIPT]')) {
-          history.add({'role': 'model', 'parts': [{'text': chunk}]});
-          history.add({'role': 'user', 'parts': [{'text': 'Next'}]});
-        } else {
-          break;
+    try {
+      for (int p = 0; p < parts.length; p++) {
+        final prefix = parts.length > 1 ? '[PART ${p + 1}]\n' : '';
+        final List<Map<String, dynamic>> history = [
+          {
+            'role': 'user',
+            'parts': [
+              {'text': '$prefix${parts[p]}'}
+            ]
+          }
+        ];
+        for (int step = 0; step < 10; step++) {
+          if (mounted) {
+            setState(() => _status = 'Gem ($_gemMode) ဖြင့် မြန်မာ Script ရေးသားနေသည် (အပိုင်း ${p + 1}/${parts.length})...');
+          }
+          final chunk = await _callGeminiModelWithFallback(client, sys, history);
+          sb.writeln(chunk);
+          if (chunk.contains('[MORE]') && !chunk.contains('[END OF SCRIPT]')) {
+            history.add({
+              'role': 'model',
+              'parts': [
+                {'text': chunk}
+              ]
+            });
+            history.add({
+              'role': 'user',
+              'parts': [
+                {'text': 'Next'}
+              ]
+            });
+          } else {
+            break;
+          }
         }
       }
+    } finally {
+      client.close();
     }
-    client.close();
     return sb.toString().replaceAll(RegExp(r'\[PART\s*\d+\]|\[MORE\]|\[END OF SCRIPT\]'), '').trim();
+  }
+
+  Future<void> _convertScriptOnly() async {
+    final raw = _inputCtrl.text.trim();
+    if (raw.isEmpty) {
+      _snack('Input Box ထဲတွင် စာသား အရင်ထည့်ပေးပါ');
+      return;
+    }
+    if (_apiKey.isEmpty) {
+      _apiDialog();
+      return;
+    }
+    setState(() {
+      _busyScript = true;
+      _status = 'မြန်မာ Podcast Script သို့ ပြောင်းလဲနေသည်...';
+    });
+    try {
+      final script = await _transformScript(raw);
+      setState(() {
+        _busyScript = false;
+        _scriptCtrl.text = script;
+        _status = '✓ မြန်မာ Podcast Script ပြောင်းလဲပြီးပါပြီ။ အောက်တွင် စစ်ဆေးပြီး အသံထုတ်နိုင်ပါပြီ။';
+      });
+    } catch (e) {
+      setState(() {
+        _busyScript = false;
+        _status = 'Script Error: $e';
+      });
+    }
   }
 
   Uint8List _wrapWav(Uint8List pcm, int rate) {
@@ -308,73 +449,77 @@ class _PodcastStudioScreenState extends State<PodcastStudioScreen> {
     return b.toBytes();
   }
 
-  Future<Uint8List> _geminiAiStudioTtsMerged(String script) async {
+  Future<Uint8List> _geminiTtsMerged(String script) async {
     String vName = 'Puck';
     for (final n in ['Puck', 'Charon', 'Fenrir', 'Orus', 'Kore', 'Aoede', 'Zephyr', 'Leda']) {
       if (_voice.contains(n)) vName = n;
     }
-    final chunks = _chunkText(script, 2500);
+    final chunks = _chunkText(script, 3200);
     final pcmBuilder = BytesBuilder(copy: false);
     final client = HttpClient();
 
-    for (int i = 0; i < chunks.length; i++) {
-      setState(() => _status = 'Gemini Voice ($vName) ဖြင့် အသံထုတ်နေသည် (အပိုင်း ${i + 1}/${chunks.length})...');
-      int retries = 0;
-      while (true) {
-        final req = await client.postUrl(Uri.parse(
-          'https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-preview-tts:generateContent?key=$_apiKey',
-        ));
-        req.headers.set('Content-Type', 'application/json; charset=utf-8');
-        req.add(utf8.encode(jsonEncode({
-          'contents': [
-            {
-              'parts': [
-                {'text': 'Read the following podcast script aloud naturally in a $_style tone:\n\n${chunks[i]}'}
-              ]
-            }
-          ],
-          'generationConfig': {
-            'responseModalities': ['AUDIO'],
-            'speechConfig': {
-              'voiceConfig': {
-                'prebuiltVoiceConfig': {'voiceName': vName}
+    try {
+      for (int i = 0; i < chunks.length; i++) {
+        if (mounted) {
+          setState(() => _status = 'Gemini Voice ($vName) ဖြင့် အသံထုတ်နေသည် (အပိုင်း ${i + 1}/${chunks.length})...');
+        }
+        int retries = 0;
+        while (true) {
+          final req = await client.postUrl(Uri.parse(
+            'https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-preview-tts:generateContent?key=$_apiKey',
+          ));
+          req.headers.set('Content-Type', 'application/json; charset=utf-8');
+          req.add(utf8.encode(jsonEncode({
+            'contents': [
+              {
+                'role': 'user',
+                'parts': [
+                  {'text': chunks[i]}
+                ]
+              }
+            ],
+            'generationConfig': {
+              'responseModalities': ['AUDIO'],
+              'speechConfig': {
+                'voiceConfig': {
+                  'prebuiltVoiceConfig': {'voiceName': vName}
+                }
               }
             }
+          })));
+          final resp = await req.close();
+          final body = await resp.transform(utf8.decoder).join();
+          if (resp.statusCode == 429 && retries < 3) {
+            retries++;
+            if (mounted) setState(() => _status = 'Rate Limit ခေတ္တစောင့်နေသည် (15s)...');
+            await Future.delayed(const Duration(seconds: 15));
+            continue;
           }
-        })));
-        final resp = await req.close();
-        final body = await resp.transform(utf8.decoder).join();
-        if (resp.statusCode == 429 && retries < 3) {
-          retries++;
-          setState(() => _status = 'API Rate Limit ခေတ္တစောင့်နေသည် (15s)...');
-          await Future.delayed(const Duration(seconds: 15));
-          continue;
+          if (resp.statusCode != 200) {
+            throw Exception('TTS HTTP ${resp.statusCode}: $body');
+          }
+          final b64 = (jsonDecode(body)['candidates']?[0]?['content']?['parts']?[0]?['inlineData']?['data'] ?? '').toString();
+          if (b64.isEmpty) {
+            throw Exception('TTS မှ အသံဒေတာ မရရှိပါ: $body');
+          }
+          pcmBuilder.add(base64Decode(b64));
+          break;
         }
-        if (resp.statusCode != 200) {
-          client.close();
-          throw Exception('Gemini TTS Error (${resp.statusCode}): VPN ဖွင့်ထားရန် နှင့် API Key မှန်ကန်ကြောင်း စစ်ဆေးပါ။\n$body');
-        }
-        final b64 = (jsonDecode(body)['candidates']?[0]?['content']?['parts']?[0]?['inlineData']?['data'] ?? '').toString();
-        if (b64.isEmpty) {
-          client.close();
-          throw Exception('Gemini TTS မှ အသံဒေတာ မရရှိပါ။');
-        }
-        pcmBuilder.add(base64Decode(b64));
-        break;
       }
+    } finally {
+      client.close();
     }
-    client.close();
     return _wrapWav(pcmBuilder.toBytes(), 24000);
   }
 
   Future<void> _generateAudio() async {
     final raw = _inputCtrl.text.trim();
-    if (raw.isEmpty) {
+    if (raw.isEmpty && _scriptCtrl.text.trim().isEmpty) {
       _snack('စာသား အရင်ထည့်ပေးပါ');
       return;
     }
     if (_apiKey.isEmpty) {
-      _snack('Gemini AI Voice ထုတ်ရန် API Key အရင်ထည့်ပေးပါ');
+      _snack('Gemini API Key အရင်ထည့်ပေးပါ');
       _apiDialog();
       return;
     }
@@ -383,10 +528,18 @@ class _PodcastStudioScreenState extends State<PodcastStudioScreen> {
       _status = 'စတင် ထုတ်လုပ်နေသည်...';
     });
     try {
-      final script = _useGem ? await _transformScript(raw) : raw;
-      setState(() => _scriptCtrl.text = script);
+      String scriptToRead = _scriptCtrl.text.trim();
+      if (_useGem) {
+        if (scriptToRead.isEmpty) {
+          scriptToRead = await _transformScript(raw);
+          setState(() => _scriptCtrl.text = scriptToRead);
+        }
+      } else {
+        scriptToRead = raw;
+        setState(() => _scriptCtrl.text = scriptToRead);
+      }
 
-      final wavBytes = await _geminiAiStudioTtsMerged(script);
+      final wavBytes = await _geminiTtsMerged(scriptToRead);
       setState(() => _status = 'အသံဖိုင် တစ်ပုဒ်တည်းအဖြစ် သိမ်းဆည်းနေသည်...');
 
       final res = await _channel.invokeMethod('saveAudio', {
@@ -400,26 +553,50 @@ class _PodcastStudioScreenState extends State<PodcastStudioScreen> {
       setState(() {
         _busyTTS = false;
         _audioPath = local;
+        _publicAudioPath = pub;
         _status = '✓ သိမ်းဆည်းပြီးပါပြီ: $pub';
       });
-      await _playOrStop();
+      await _playAudio();
     } catch (e) {
       setState(() {
         _busyTTS = false;
-        _status = '$e';
+        _status = 'Error: $e';
       });
     }
   }
 
-  Future<void> _playOrStop() async {
+  Future<void> _playAudio() async {
     if (_audioPath.isEmpty) return;
-    if (_playing) {
-      await _channel.invokeMethod('stopAudio');
-      setState(() => _playing = false);
-    } else {
-      await _channel.invokeMethod('playAudio', {'path': _audioPath});
-      setState(() => _playing = true);
+    final res = await _channel.invokeMethod('playAudio', {'path': _audioPath});
+    if (res is Map && mounted) {
+      setState(() {
+        _playing = true;
+        _durMs = (res['dur'] as int?) ?? 0;
+        _posMs = (res['pos'] as int?) ?? 0;
+      });
     }
+  }
+
+  Future<void> _pauseAudio() async {
+    await _channel.invokeMethod('pauseAudio');
+    if (mounted) setState(() => _playing = false);
+  }
+
+  Future<void> _stopAudio() async {
+    await _channel.invokeMethod('stopAudio');
+    if (mounted) {
+      setState(() {
+        _playing = false;
+        _posMs = 0;
+      });
+    }
+  }
+
+  String _fmtMs(int ms) {
+    final totalSec = (ms ~/ 1000).clamp(0, 86400);
+    final m = (totalSec ~/ 60).toString().padLeft(2, '0');
+    final s = (totalSec % 60).toString().padLeft(2, '0');
+    return '$m:$s';
   }
 
   @override
@@ -451,7 +628,7 @@ class _PodcastStudioScreenState extends State<PodcastStudioScreen> {
                   child: TextButton.icon(
                     onPressed: () => setState(() => _tab = 1),
                     icon: Icon(Icons.auto_awesome, color: _tab == 1 ? goldAccent : Colors.white54),
-                    label: Text('2. Podcast TTS', style: TextStyle(color: _tab == 1 ? goldAccent : Colors.white54)),
+                    label: Text('2. Podcast Studio', style: TextStyle(color: _tab == 1 ? goldAccent : Colors.white54)),
                   ),
                 ),
               ],
@@ -464,15 +641,17 @@ class _PodcastStudioScreenState extends State<PodcastStudioScreen> {
             ),
             if (_tab == 1)
               Padding(
-                padding: const EdgeInsets.all(16),
+                padding: const EdgeInsets.fromLTRB(16, 8, 16, 16),
                 child: SizedBox(
                   width: double.infinity,
                   height: 50,
                   child: FilledButton.icon(
-                    onPressed: _busyTTS ? null : _generateAudio,
-                    icon: const Icon(Icons.auto_awesome, color: Colors.black),
+                    onPressed: (_busyTTS || _busyScript) ? null : _generateAudio,
+                    icon: _busyTTS
+                        ? const SizedBox(width: 18, height: 18, child: CircularProgressIndicator(strokeWidth: 2, color: Colors.black))
+                        : const Icon(Icons.auto_awesome, color: Colors.black),
                     label: Text(
-                      _busyTTS ? 'ထုတ်လုပ်နေသည်...' : 'Podcast ထုတ်လုပ်မည် (Generate Full Audio)',
+                      _busyTTS ? 'အသံဖိုင် ထုတ်လုပ်နေသည်...' : 'Podcast အသံဖိုင် ထုတ်လုပ်မည် (Generate Audio)',
                       style: const TextStyle(color: Colors.black, fontWeight: FontWeight.bold),
                     ),
                   ),
@@ -491,16 +670,18 @@ class _PodcastStudioScreenState extends State<PodcastStudioScreen> {
       Row(
         children: [
           Expanded(
-            child: OutlinedButton(
+            child: OutlinedButton.icon(
               onPressed: () => _pickMedia('audio/*'),
-              child: const Text('အသံဖိုင် ရွေးမည်'),
+              icon: const Icon(Icons.audiotrack, color: goldAccent, size: 18),
+              label: const Text('အသံဖိုင် ရွေးမည်'),
             ),
           ),
           const SizedBox(width: 8),
           Expanded(
-            child: OutlinedButton(
+            child: OutlinedButton.icon(
               onPressed: () => _pickMedia('video/*'),
-              child: const Text('MP4 ရွေးမည်'),
+              icon: const Icon(Icons.movie, color: goldAccent, size: 18),
+              label: const Text('MP4 ရွေးမည်'),
             ),
           ),
         ],
@@ -508,22 +689,51 @@ class _PodcastStudioScreenState extends State<PodcastStudioScreen> {
       const SizedBox(height: 8),
       Text(_mediaPath, style: const TextStyle(fontSize: 12, color: Colors.white60)),
       const SizedBox(height: 12),
-      FilledButton(
+      FilledButton.icon(
         onPressed: _busySTT ? null : _runWhisper,
-        child: Text(
+        icon: _busySTT
+            ? const SizedBox(width: 16, height: 16, child: CircularProgressIndicator(strokeWidth: 2, color: Colors.black))
+            : const Icon(Icons.graphic_eq, color: Colors.black),
+        label: Text(
           _busySTT ? 'Offline Whisper ပြောင်းနေသည်...' : 'Offline Whisper ဖြင့် စာသားထုတ်မည်',
           style: const TextStyle(color: Colors.black, fontWeight: FontWeight.bold),
         ),
       ),
       const SizedBox(height: 16),
-      TextField(controller: _sttCtrl, maxLines: 8, decoration: const InputDecoration(border: OutlineInputBorder())),
+      TextField(
+        controller: _sttCtrl,
+        maxLines: 8,
+        decoration: const InputDecoration(
+          labelText: 'Whisper Output Transcript',
+          border: OutlineInputBorder(),
+        ),
+      ),
       const SizedBox(height: 12),
-      FilledButton(
-        onPressed: () => setState(() {
-          _inputCtrl.text = _sttCtrl.text;
-          _tab = 1;
-        }),
-        child: const Text('အပိုင်း (၂) သို့ ပို့မည်', style: TextStyle(color: Colors.black)),
+      Row(
+        children: [
+          Expanded(
+            child: OutlinedButton.icon(
+              onPressed: () {
+                Clipboard.setData(ClipboardData(text: _sttCtrl.text));
+                _snack('Copy ကူးပြီးပါပြီ');
+              },
+              icon: const Icon(Icons.copy, color: goldAccent, size: 16),
+              label: const Text('Copy'),
+            ),
+          ),
+          const SizedBox(width: 8),
+          Expanded(
+            child: FilledButton.icon(
+              onPressed: () => setState(() {
+                _inputCtrl.text = _sttCtrl.text;
+                _scriptCtrl.clear();
+                _tab = 1;
+              }),
+              icon: const Icon(Icons.arrow_forward, color: Colors.black, size: 16),
+              label: const Text('အပိုင်း (၂) သို့ ပို့မည်', style: TextStyle(color: Colors.black)),
+            ),
+          ),
+        ],
       ),
     ];
   }
@@ -533,16 +743,21 @@ class _PodcastStudioScreenState extends State<PodcastStudioScreen> {
       Row(
         children: [
           Expanded(
-            child: OutlinedButton(
+            child: OutlinedButton.icon(
               onPressed: _pickTxtFile,
-              child: const Text('.txt ဖိုင် ရွေးပါ'),
+              icon: const Icon(Icons.description, color: goldAccent, size: 18),
+              label: const Text('.txt ဖိုင် ရွေးပါ'),
             ),
           ),
           const SizedBox(width: 8),
           Expanded(
-            child: OutlinedButton(
-              onPressed: () => setState(() => _inputCtrl.text = _sttCtrl.text),
-              child: const Text('အပိုင်း (၁) မှ ယူမည်'),
+            child: OutlinedButton.icon(
+              onPressed: () => setState(() {
+                _inputCtrl.text = _sttCtrl.text;
+                _scriptCtrl.clear();
+              }),
+              icon: const Icon(Icons.input, color: goldAccent, size: 18),
+              label: const Text('အပိုင်း (၁) မှ ယူမည်'),
             ),
           ),
         ],
@@ -552,7 +767,8 @@ class _PodcastStudioScreenState extends State<PodcastStudioScreen> {
         controller: _inputCtrl,
         maxLines: 5,
         decoration: const InputDecoration(
-          hintText: 'စာသား ရိုက်ထည့်ပါ သို့မဟုတ် Paste ချပါ...',
+          labelText: 'Input Text / Source Transcript',
+          hintText: 'စာသား ရိုက်ထည့်ပါ၊ Paste ချပါ သို့မဟုတ် .txt ဖိုင်ရွေးပါ...',
           border: OutlineInputBorder(),
         ),
       ),
@@ -574,21 +790,39 @@ class _PodcastStudioScreenState extends State<PodcastStudioScreen> {
                           _saveCfg();
                         }
                       : null,
-                  child: Text(m),
+                  child: Text(m, style: const TextStyle(fontWeight: FontWeight.bold)),
                 ),
               ),
             ),
-          Switch(
-            value: _useGem,
-            activeColor: goldAccent,
-            onChanged: (v) {
-              setState(() => _useGem = v);
-              _saveCfg();
-            },
+          Column(
+            children: [
+              Switch(
+                value: _useGem,
+                activeColor: goldAccent,
+                onChanged: (v) {
+                  setState(() => _useGem = v);
+                  _saveCfg();
+                },
+              ),
+              Text(_useGem ? 'Gem ON' : 'Custom TTS', style: const TextStyle(fontSize: 11, color: goldAccent)),
+            ],
           ),
         ],
       ),
-      const SizedBox(height: 12),
+      if (_useGem) ...[
+        const SizedBox(height: 8),
+        OutlinedButton.icon(
+          onPressed: (_busyScript || _busyTTS) ? null : _convertScriptOnly,
+          icon: _busyScript
+              ? const SizedBox(width: 16, height: 16, child: CircularProgressIndicator(strokeWidth: 2, color: goldAccent))
+              : const Icon(Icons.translate, color: goldAccent),
+          label: Text(
+            _busyScript ? 'မြန်မာ Script ပြောင်းနေသည်...' : 'မြန်မာ Podcast Script အရင်ပြောင်းမည် (Preview Script)',
+            style: const TextStyle(color: goldAccent, fontWeight: FontWeight.bold),
+          ),
+        ),
+      ],
+      const SizedBox(height: 10),
       DropdownButton<String>(
         value: _style,
         isExpanded: true,
@@ -607,34 +841,91 @@ class _PodcastStudioScreenState extends State<PodcastStudioScreen> {
           _saveCfg();
         },
       ),
-      Slider(
-        value: _speed,
-        min: 0.5,
-        max: 2.0,
-        divisions: 15,
-        activeColor: goldAccent,
-        label: '${_speed.toStringAsFixed(1)}x',
-        onChanged: (v) => setState(() => _speed = v),
-        onChangeEnd: (_) => _saveCfg(),
-      ),
       if (_status.isNotEmpty)
-        Padding(
-          padding: const EdgeInsets.symmetric(vertical: 8),
-          child: Text(_status, style: const TextStyle(color: goldAccent)),
+        Container(
+          margin: const EdgeInsets.symmetric(vertical: 8),
+          padding: const EdgeInsets.all(10),
+          decoration: BoxDecoration(
+            color: cardBg,
+            borderRadius: BorderRadius.circular(8),
+            border: Border.all(color: goldAccent.withOpacity(0.5)),
+          ),
+          child: Text(_status, style: const TextStyle(color: goldAccent, fontSize: 13)),
         ),
-      if (_audioPath.isNotEmpty)
-        FilledButton.icon(
-          onPressed: _playOrStop,
-          icon: Icon(_playing ? Icons.stop : Icons.play_arrow, color: Colors.black),
-          label: Text(
-            _playing ? 'Stop Audio' : 'Play Generated Audio',
-            style: const TextStyle(color: Colors.black, fontWeight: FontWeight.bold),
+      Container(
+        margin: const EdgeInsets.symmetric(vertical: 8),
+        padding: const EdgeInsets.all(12),
+        decoration: BoxDecoration(
+          color: cardBg,
+          borderRadius: BorderRadius.circular(12),
+          border: Border.all(color: Colors.white24),
+        ),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            Row(
+              children: [
+                const Icon(Icons.headphones, color: goldAccent, size: 20),
+                const SizedBox(width: 8),
+                Expanded(
+                  child: Text(
+                    _audioPath.isEmpty
+                        ? 'In-App Audio Preview Player (အသံထုတ်ပြီးပါက နားထောင်ရန်)'
+                        : 'Playing: ${_publicAudioPath.split('/').last}',
+                    style: const TextStyle(color: goldAccent, fontWeight: FontWeight.bold, fontSize: 13),
+                  ),
+                ),
+              ],
+            ),
+            Slider(
+              value: _posMs.toDouble().clamp(0, _durMs > 0 ? _durMs.toDouble() : 1.0),
+              min: 0,
+              max: _durMs > 0 ? _durMs.toDouble() : 1.0,
+              activeColor: goldAccent,
+              onChanged: _audioPath.isEmpty
+                  ? null
+                  : (v) async {
+                      setState(() => _posMs = v.toInt());
+                      await _channel.invokeMethod('seekAudio', {'pos': v.toInt()});
+                    },
+            ),
+            Row(
+              mainAxisAlignment: MainAxisAlignment.spaceBetween,
+              children: [
+                Text('${_fmtMs(_posMs)} / ${_fmtMs(_durMs)}', style: const TextStyle(fontSize: 12, color: Colors.white70)),
+                Row(
+                  children: [
+                    IconButton(
+                      onPressed: _audioPath.isEmpty ? null : (_playing ? _pauseAudio : _playAudio),
+                      icon: Icon(_playing ? Icons.pause_circle_filled : Icons.play_circle_fill, color: goldAccent, size: 34),
+                    ),
+                    IconButton(
+                      onPressed: _audioPath.isEmpty ? null : _stopAudio,
+                      icon: const Icon(Icons.stop_circle_outlined, color: Colors.white70, size: 30),
+                    ),
+                  ],
+                ),
+              ],
+            ),
+          ],
+        ),
+      ),
+      const SizedBox(height: 8),
+      TextField(
+        controller: _scriptCtrl,
+        maxLines: 6,
+        decoration: InputDecoration(
+          labelText: 'Preview / Output Podcast Script (ပြင်ဆင်နိုင်သည်)',
+          border: const OutlineInputBorder(),
+          suffixIcon: IconButton(
+            icon: const Icon(Icons.copy, color: goldAccent),
+            onPressed: () {
+              Clipboard.setData(ClipboardData(text: _scriptCtrl.text));
+              _snack('Script Copy ကူးပြီးပါပြီ');
+            },
           ),
         ),
-      if (_scriptCtrl.text.isNotEmpty) ...[
-        const SizedBox(height: 10),
-        TextField(controller: _scriptCtrl, maxLines: 6, decoration: const InputDecoration(border: OutlineInputBorder())),
-      ],
+      ),
     ];
   }
 }
