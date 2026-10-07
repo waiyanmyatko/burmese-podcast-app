@@ -64,7 +64,7 @@ jobs:
           mp = 'android/app/src/main/AndroidManifest.xml'
           with open(mp, 'r') as f:
               txt = f.read()
-          perm = '<uses-permission android:name="android.permission.INTERNET"/><application'
+          perm = '<uses-permission android:name="android.permission.INTERNET"/><uses-permission android:name="android.permission.WAKE_LOCK"/><application'
           with open(mp, 'w') as f:
               f.write(txt.replace('<application', perm, 1))
 
@@ -177,6 +177,7 @@ jobs:
           import android.os.Environment
           import android.provider.MediaStore
           import android.provider.OpenableColumns
+          import android.view.WindowManager
           import com.waiyan.whisper.WhisperBridge
           import io.flutter.embedding.android.FlutterActivity
           import io.flutter.embedding.engine.FlutterEngine
@@ -191,10 +192,13 @@ jobs:
               private var pendingRes: MethodChannel.Result? = null
               private var player: MediaPlayer? = null
               private var loadedPath: String = ""
+              private var channel: MethodChannel? = null
 
               override fun configureFlutterEngine(flutterEngine: FlutterEngine) {
                   super.configureFlutterEngine(flutterEngine)
-                  MethodChannel(flutterEngine.dartExecutor.binaryMessenger, chName).setMethodCallHandler { call, res ->
+                  window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
+                  channel = MethodChannel(flutterEngine.dartExecutor.binaryMessenger, chName)
+                  channel?.setMethodCallHandler { call, res ->
                       val prefs = getSharedPreferences("wy_prefs", Context.MODE_PRIVATE)
                       when (call.method) {
                           "loadPrefs" -> {
@@ -247,10 +251,19 @@ jobs:
                               val mp = call.argument<String>("modelPath") ?: File(filesDir, "ggml-tiny.bin").absolutePath
                               Thread {
                                   try {
-                                      val samples = decodeTo16kFloat(p)
-                                      val txt = WhisperBridge.transcribe(mp, samples).trim()
+                                      runOnUiThread { channel?.invokeMethod("updateProgress", "အသံဖိုင်ကို စတင်ခွဲခြမ်းနေပါသည်...") }
+                                      val chunks = decodeTo16kFloatChunks(p)
+                                      val sb = StringBuilder()
+                                      for (i in chunks.indices) {
+                                          runOnUiThread { channel?.invokeMethod("updateProgress", "Offline Whisper Processing: အပိုင်း (${i + 1} / ${chunks.size}) ကို စာသားထုတ်နေပါသည်...\n\n(ဖုန်း Screen မပိတ်သွားစေရန် ဖွင့်ထားပေးပါ)") }
+                                          val txt = WhisperBridge.transcribe(mp, chunks[i]).trim()
+                                          if (txt.isNotEmpty()) {
+                                              sb.append(txt).append(" ")
+                                          }
+                                      }
+                                      val finalTxt = sb.toString().trim()
                                       runOnUiThread {
-                                          if (txt.isNotEmpty()) res.success(txt)
+                                          if (finalTxt.isNotEmpty()) res.success(finalTxt)
                                           else res.error("EMPTY", "အသံဖိုင်မှ စာသား မထွက်လာပါ", null)
                                       }
                                   } catch (e: Exception) {
@@ -319,7 +332,7 @@ jobs:
                   }
               }
 
-              private fun decodeTo16kFloat(inPath: String): FloatArray {
+              private fun decodeTo16kFloatChunks(inPath: String): List<FloatArray> {
                   val ex = MediaExtractor().apply { setDataSource(inPath) }
                   var idx = -1
                   var fmt: MediaFormat? = null
@@ -336,8 +349,12 @@ jobs:
                   dec.start()
                   var sr = if (fmt.containsKey(MediaFormat.KEY_SAMPLE_RATE)) fmt.getInteger(MediaFormat.KEY_SAMPLE_RATE) else 44100
                   var ch = if (fmt.containsKey(MediaFormat.KEY_CHANNEL_COUNT)) fmt.getInteger(MediaFormat.KEY_CHANNEL_COUNT) else 1
-                  var pcm = FloatArray(16000 * 60)
+                  
+                  val chunks = java.util.ArrayList<FloatArray>()
+                  val chunkSize = 16000 * 60 * 3 
+                  var currentChunk = FloatArray(chunkSize)
                   var count = 0
+                  
                   val info = MediaCodec.BufferInfo()
                   var done = false
                   while (!done) {
@@ -352,9 +369,9 @@ jobs:
                       if (outIdx >= 0) {
                           val b = dec.getOutputBuffer(outIdx)!!
                           if (info.size > 0) {
-                              val chunk = ByteArray(info.size)
-                              b.get(chunk); b.clear()
-                              val sb = ByteBuffer.wrap(chunk).order(ByteOrder.LITTLE_ENDIAN).asShortBuffer()
+                              val chunkBytes = ByteArray(info.size)
+                              b.get(chunkBytes); b.clear()
+                              val sb = ByteBuffer.wrap(chunkBytes).order(ByteOrder.LITTLE_ENDIAN).asShortBuffer()
                               val frames = sb.remaining() / ch
                               val step = sr.toDouble() / 16000.0
                               var pos = 0.0
@@ -362,9 +379,16 @@ jobs:
                               while (pos.toInt() < frames) {
                                   val base = pos.toInt() * ch
                                   var sum = 0
-                                  for (c in 0 until ch) if (base + c < sb.limit()) sum += sb.get(base + c).toInt()
-                                  if (count >= pcm.size) pcm = pcm.copyOf(pcm.size * 2)
-                                  pcm[count++] = sum.toFloat() * invCh
+                                  for (c in 0 until ch) {
+                                      if (base + c < sb.limit()) sum += sb.get(base + c).toInt()
+                                  }
+                                  
+                                  if (count >= chunkSize) {
+                                      chunks.add(currentChunk)
+                                      currentChunk = FloatArray(chunkSize)
+                                      count = 0
+                                  }
+                                  currentChunk[count++] = sum.toFloat() * invCh
                                   pos += step
                               }
                           }
@@ -377,7 +401,8 @@ jobs:
                       }
                   }
                   dec.stop(); dec.release(); ex.release()
-                  return pcm.copyOf(count)
+                  if (count > 0) chunks.add(currentChunk.copyOf(count))
+                  return chunks
               }
 
               private fun saveDl(src: File, fn: String, mime: String): String {
