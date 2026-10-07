@@ -110,15 +110,24 @@ jobs:
               jfloat *pcm_data = env->GetFloatArrayElements(pcm_j, nullptr);
 
               struct whisper_full_params wparams = whisper_full_default_params(WHISPER_SAMPLING_GREEDY);
+              
+              // ==========================================
+              // ANTI-HALLUCINATION & REPETITION PENALTY
+              // ==========================================
               wparams.print_progress = false;
               wparams.print_special = false;
               wparams.print_realtime = false;
               wparams.print_timestamps = false;
               wparams.single_segment = false;
-              wparams.no_context = true;
-              wparams.greedy.best_of = 1;
-              wparams.temperature_inc = 0.0f;
+              wparams.no_context = true; // Disable previous context to stop repeating loops
               wparams.n_threads = 6;
+              
+              // Hallucination constraints
+              wparams.entropy_thold = 2.4f;      // Reject text if entropy is high (gibberish)
+              wparams.logprob_thold = -1.0f;     // Reject if model is unsure
+              wparams.no_speech_thold = 0.6f;    // Skip completely silent parts
+              
+              // ==========================================
 
               std::string out_text = "";
               if (whisper_full(g_ctx, wparams, pcm_data, n_samples) == 0) {
