@@ -71,7 +71,6 @@ class _PodcastStudioScreenState extends State<PodcastStudioScreen> {
   bool _useGem = false;
   String _gemMode = 'For Point';
   
-  // Google AI Studio Original Categories & Voices
   String _style = 'Tutor';
   String _voice = 'Bodi';
   double _speed = 1.0;
@@ -87,7 +86,6 @@ class _PodcastStudioScreenState extends State<PodcastStudioScreen> {
   int _durMs = 0;
   Timer? _playerTimer;
 
-  // Exact Google AI Studio Voice Mapping
   final Map<String, List<String>> _voiceCategories = {
     'Tutor': ['Bodi', 'Lumi', 'Sola', 'Varo', 'Sadaltager', 'Sulafat', 'Zephyr', 'Fola'],
     'Podcast': ['Puck', 'Charon', 'Kore', 'Fenrir', 'Aoede'],
@@ -100,6 +98,18 @@ class _PodcastStudioScreenState extends State<PodcastStudioScreen> {
   void initState() {
     super.initState();
     _initData();
+    
+    // Listen for progress updates from Kotlin Native Thread
+    _channel.setMethodCallHandler((call) async {
+      if (call.method == 'updateProgress') {
+        if (mounted) {
+          setState(() {
+            _sttCtrl.text = call.arguments.toString();
+          });
+        }
+      }
+    });
+    
     _playerTimer = Timer.periodic(const Duration(milliseconds: 500), (_) => _pollAudioState());
   }
 
@@ -488,7 +498,9 @@ class _PodcastStudioScreenState extends State<PodcastStudioScreen> {
       });
       setState(() {
         _busySTT = false;
-        _sttCtrl.text = (res ?? '').toString().trim();
+        if (res != null) {
+           _sttCtrl.text = res.toString().trim();
+        }
       });
       _snack('Offline Whisper စာသားထုတ်ယူခြင်း ပြီးမြောက်ပါပြီ');
     } catch (e) {
@@ -680,7 +692,6 @@ class _PodcastStudioScreenState extends State<PodcastStudioScreen> {
   }
 
   Future<Uint8List> _geminiTtsMerged(String script) async {
-    // API သို့ တိုက်ရိုက်ပေးပို့မည့် အသံနာမည် (Bodi, Puck စသည်)
     String vName = _voice;
     final chunks = _chunkText(script, 3200);
     final pcmBuilder = BytesBuilder(copy: false);
@@ -1068,7 +1079,6 @@ class _PodcastStudioScreenState extends State<PodcastStudioScreen> {
       ],
       const SizedBox(height: 16),
       
-      // Original English Categories and Voices Dropdowns
       Row(
         children: [
           Expanded(
