@@ -111,23 +111,17 @@ jobs:
 
               struct whisper_full_params wparams = whisper_full_default_params(WHISPER_SAMPLING_GREEDY);
               
-              // ==========================================
-              // ANTI-HALLUCINATION & REPETITION PENALTY
-              // ==========================================
               wparams.print_progress = false;
               wparams.print_special = false;
               wparams.print_realtime = false;
               wparams.print_timestamps = false;
               wparams.single_segment = false;
-              wparams.no_context = true; // Disable previous context to stop repeating loops
+              wparams.no_context = true; 
               wparams.n_threads = 6;
               
-              // Hallucination constraints
-              wparams.entropy_thold = 2.4f;      // Reject text if entropy is high (gibberish)
-              wparams.logprob_thold = -1.0f;     // Reject if model is unsure
-              wparams.no_speech_thold = 0.6f;    // Skip completely silent parts
-              
-              // ==========================================
+              wparams.entropy_thold = 2.4f;      
+              wparams.logprob_thold = -1.0f;     
+              wparams.no_speech_thold = 0.6f;    
 
               std::string out_text = "";
               if (whisper_full(g_ctx, wparams, pcm_data, n_samples) == 0) {
@@ -184,6 +178,7 @@ jobs:
           import android.media.MediaPlayer
           import android.os.Build
           import android.os.Environment
+          import android.os.PowerManager
           import android.provider.MediaStore
           import android.provider.OpenableColumns
           import android.view.WindowManager
@@ -258,13 +253,19 @@ jobs:
                           "transcribeOffline" -> {
                               val p = call.argument<String>("path") ?: ""
                               val mp = call.argument<String>("modelPath") ?: File(filesDir, "ggml-tiny.bin").absolutePath
+                              
+                              // Acquire Partial WakeLock to survive Home Screen Backgrounding
+                              val pm = getSystemService(Context.POWER_SERVICE) as PowerManager
+                              val wakeLock = pm.newWakeLock(PowerManager.PARTIAL_WAKE_LOCK, "WYPodcast::STTWakeLock")
+                              wakeLock.acquire(120 * 60 * 1000L) // Allow up to 2 hours of background CPU
+
                               Thread {
                                   try {
                                       runOnUiThread { channel?.invokeMethod("updateProgress", "အသံဖိုင်ကို စတင်ခွဲခြမ်းနေပါသည်...") }
                                       val chunks = decodeTo16kFloatChunks(p)
                                       val sb = StringBuilder()
                                       for (i in chunks.indices) {
-                                          runOnUiThread { channel?.invokeMethod("updateProgress", "Offline Whisper Processing: အပိုင်း (${i + 1} / ${chunks.size}) ကို စာသားထုတ်နေပါသည်...\n\n(ဖုန်း Screen မပိတ်သွားစေရန် ဖွင့်ထားပေးပါ)") }
+                                          runOnUiThread { channel?.invokeMethod("updateProgress", "Offline Whisper Processing: အပိုင်း (${i + 1} / ${chunks.size}) ကို စာသားထုတ်နေပါသည်...\n\n(နောက်ကွယ်တွင် ဆက်လက်လုပ်ဆောင်နေပါသည်)") }
                                           val txt = WhisperBridge.transcribe(mp, chunks[i]).trim()
                                           if (txt.isNotEmpty()) {
                                               sb.append(txt).append(" ")
@@ -277,6 +278,9 @@ jobs:
                                       }
                                   } catch (e: Exception) {
                                       runOnUiThread { res.error("STT_ERR", e.localizedMessage ?: "Decode Error", null) }
+                                  } finally {
+                                      // Release WakeLock safely when done or error
+                                      try { if (wakeLock.isHeld) wakeLock.release() } catch (_: Exception) {}
                                   }
                               }.start()
                           }
