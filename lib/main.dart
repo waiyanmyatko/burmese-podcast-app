@@ -99,7 +99,6 @@ class _PodcastStudioScreenState extends State<PodcastStudioScreen> {
     super.initState();
     _initData();
     
-    // Listen for progress updates from Kotlin Native Thread
     _channel.setMethodCallHandler((call) async {
       if (call.method == 'updateProgress') {
         if (mounted) {
@@ -543,49 +542,65 @@ class _PodcastStudioScreenState extends State<PodcastStudioScreen> {
     String firstRealErr = '';
 
     for (final m in models) {
-      try {
-        final req = await client.postUrl(Uri.parse(
-          'https://generativelanguage.googleapis.com/v1beta/models/$m:generateContent?key=$_apiKey',
-        ));
-        req.headers.set('Content-Type', 'application/json; charset=utf-8');
-        req.add(utf8.encode(jsonEncode({
-          'systemInstruction': {
-            'parts': [
-              {'text': sysPrompt}
-            ]
-          },
-          'contents': history,
-          'safetySettings': [
-            {'category': 'HARM_CATEGORY_HARASSMENT', 'threshold': 'BLOCK_NONE'},
-            {'category': 'HARM_CATEGORY_HATE_SPEECH', 'threshold': 'BLOCK_NONE'},
-            {'category': 'HARM_CATEGORY_SEXUALLY_EXPLICIT', 'threshold': 'BLOCK_NONE'},
-            {'category': 'HARM_CATEGORY_DANGEROUS_CONTENT', 'threshold': 'BLOCK_NONE'},
-          ],
-          'generationConfig': {'temperature': 0.4},
-        })));
-        final resp = await req.close();
-        final body = await resp.transform(utf8.decoder).join();
-        if (resp.statusCode == 200) {
-          final j = jsonDecode(body);
-          final candidates = j['candidates'] as List?;
-          if (candidates != null && candidates.isNotEmpty) {
-            final parts = candidates[0]['content']?['parts'] as List?;
-            if (parts != null && parts.isNotEmpty) {
-              final sb = StringBuffer();
-              for (final pt in parts) {
-                if (pt['text'] != null) sb.write(pt['text']);
+      int retries = 0;
+      while (retries < 3) {
+        try {
+          final req = await client.postUrl(Uri.parse(
+            'https://generativelanguage.googleapis.com/v1beta/models/$m:generateContent?key=$_apiKey',
+          ));
+          req.headers.set('Content-Type', 'application/json; charset=utf-8');
+          req.add(utf8.encode(jsonEncode({
+            'systemInstruction': {
+              'parts': [
+                {'text': sysPrompt}
+              ]
+            },
+            'contents': history,
+            'safetySettings': [
+              {'category': 'HARM_CATEGORY_HARASSMENT', 'threshold': 'BLOCK_NONE'},
+              {'category': 'HARM_CATEGORY_HATE_SPEECH', 'threshold': 'BLOCK_NONE'},
+              {'category': 'HARM_CATEGORY_SEXUALLY_EXPLICIT', 'threshold': 'BLOCK_NONE'},
+              {'category': 'HARM_CATEGORY_DANGEROUS_CONTENT', 'threshold': 'BLOCK_NONE'},
+            ],
+            'generationConfig': {'temperature': 0.4},
+          })));
+          
+          final resp = await req.close();
+          final body = await resp.transform(utf8.decoder).join();
+          
+          if (resp.statusCode == 200) {
+            final j = jsonDecode(body);
+            final candidates = j['candidates'] as List?;
+            if (candidates != null && candidates.isNotEmpty) {
+              final parts = candidates[0]['content']?['parts'] as List?;
+              if (parts != null && parts.isNotEmpty) {
+                final sb = StringBuffer();
+                for (final pt in parts) {
+                  if (pt['text'] != null) sb.write(pt['text']);
+                }
+                final txt = sb.toString().trim();
+                if (txt.isNotEmpty) return txt;
               }
-              final txt = sb.toString().trim();
-              if (txt.isNotEmpty) return txt;
+              final reason = candidates[0]['finishReason'] ?? 'UNKNOWN';
+              if (firstRealErr.isEmpty) firstRealErr = 'Model ($m) blocked response: $reason';
+              break; 
             }
-            final reason = candidates[0]['finishReason'] ?? 'UNKNOWN';
-            if (firstRealErr.isEmpty) firstRealErr = 'Model ($m) blocked response: $reason';
+          } else if (resp.statusCode == 429 || resp.statusCode == 503) {
+            // Server busy or rate limited -> Retry with delay
+            retries++;
+            if (mounted) setState(() => _status = 'API အသုံးပြုသူများနေပါသည် ($m). ဖြည်းဖြည်းချင်း ထပ်မံခေါ်ယူနေပါသည် ($retries/3)...');
+            await Future.delayed(Duration(seconds: 4 * retries));
+            continue; 
+          } else if (resp.statusCode != 404) {
+            if (firstRealErr.isEmpty) firstRealErr = '($m HTTP ${resp.statusCode}): $body';
+            break; 
+          } else {
+            break; 
           }
-        } else if (resp.statusCode != 404) {
-          if (firstRealErr.isEmpty) firstRealErr = '($m HTTP ${resp.statusCode}): $body';
+        } catch (e) {
+          if (firstRealErr.isEmpty) firstRealErr = e.toString();
+          break;
         }
-      } catch (e) {
-        if (firstRealErr.isEmpty) firstRealErr = e.toString();
       }
     }
     throw Exception(firstRealErr.isNotEmpty ? firstRealErr : 'Gemini API ချိတ်ဆက်၍ မရပါ။ VPN နှင့် API Key ကို စစ်ဆေးပါ။');
@@ -599,6 +614,12 @@ class _PodcastStudioScreenState extends State<PodcastStudioScreen> {
 
     try {
       for (int p = 0; p < parts.length; p++) {
+        // Pacing for Free API limit (Wait 2.5s between parts)
+        if (p > 0) {
+           if (mounted) setState(() => _status = 'API Limit မဖြစ်စေရန် ခေတ္တနားနေပါသည် (အပိုင်း ${p + 1} အတွက်)...');
+           await Future.delayed(const Duration(milliseconds: 2500));
+        }
+        
         final prefix = parts.length > 1 ? '[PART ${p + 1}]\n' : '';
         final List<Map<String, dynamic>> history = [
           {
@@ -703,7 +724,7 @@ class _PodcastStudioScreenState extends State<PodcastStudioScreen> {
           setState(() => _status = 'Gemini Voice ($vName) ဖြင့် အသံထုတ်နေသည် (အပိုင်း ${i + 1}/${chunks.length})...');
         }
         int retries = 0;
-        while (true) {
+        while (retries < 4) {
           final req = await client.postUrl(Uri.parse(
             'https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-preview-tts:generateContent?key=$_apiKey',
           ));
@@ -728,10 +749,11 @@ class _PodcastStudioScreenState extends State<PodcastStudioScreen> {
           })));
           final resp = await req.close();
           final body = await resp.transform(utf8.decoder).join();
-          if (resp.statusCode == 429 && retries < 3) {
+          
+          if (resp.statusCode == 429 || resp.statusCode == 503) {
             retries++;
-            if (mounted) setState(() => _status = 'Rate Limit ခေတ္တစောင့်နေသည် (15s)...');
-            await Future.delayed(const Duration(seconds: 15));
+            if (mounted) setState(() => _status = 'Rate Limit ကို ကျော်ဖြတ်ရန် ခေတ္တစောင့်ဆိုင်းနေပါသည် (${retries*4}s)...');
+            await Future.delayed(Duration(seconds: 4 * retries));
             continue;
           }
           if (resp.statusCode != 200 && vName != 'Puck' && retries == 0) {
@@ -746,7 +768,14 @@ class _PodcastStudioScreenState extends State<PodcastStudioScreen> {
           if (b64.isEmpty) {
             throw Exception('TTS မှ အသံဒေတာ မရရှိပါ: $body');
           }
+          
           pcmBuilder.add(base64Decode(b64));
+          
+          // CRITICAL: Pace TTS requests to avoid bursting the Free API Limits
+          if (i < chunks.length - 1) {
+             await Future.delayed(const Duration(milliseconds: 1500));
+          }
+          
           break;
         }
       }
