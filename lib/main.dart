@@ -70,8 +70,10 @@ class _PodcastStudioScreenState extends State<PodcastStudioScreen> {
 
   bool _useGem = false;
   String _gemMode = 'For Point';
-  String _style = 'Tutor (ပညာပေး ရှင်းပြသူ ဆရာဟန်)';
-  String _voice = 'Tutor - Bodi (Quiet & intimate · Low pitch)';
+  
+  // Google AI Studio Original Categories & Voices
+  String _style = 'Tutor';
+  String _voice = 'Bodi';
   double _speed = 1.0;
 
   bool _busyScript = false;
@@ -85,32 +87,14 @@ class _PodcastStudioScreenState extends State<PodcastStudioScreen> {
   int _durMs = 0;
   Timer? _playerTimer;
 
-  final List<String> _styles = [
-    'Tutor (ပညာပေး ရှင်းပြသူ ဆရာဟန်)',
-    'Podcast (သဘာဝကျသော ဆွေးနွေးခန်းဟန်)',
-    'Storytelling (ဇာတ်လမ်း/ဝတ္ထု ပြောပြဟန်)',
-    'News / Broadcast (သတင်းကြေညာဟန်)',
-    'Documentary (မှတ်တမ်းရုပ်ရှင် နောက်ခံပြောဟန်)',
-    'Educational / Explainer (ပညာပေး ရှင်းပြဟန်)',
-  ];
-
-  final List<String> _voices = [
-    'Tutor - Bodi (Quiet & intimate · Low pitch)',
-    'Tutor - Lumi (Warm & approachable · Low pitch)',
-    'Tutor - Sola (Gentle & relaxed · Very high pitch)',
-    'Tutor - Varo (Laid-back & chill · Low pitch)',
-    'Tutor - Sadaltager (Knowledgeable · Middle pitch)',
-    'Tutor - Sulafat (Warm · Middle pitch)',
-    'Tutor - Zephyr (Bright · Higher pitch)',
-    'Tutor - Fola (Clear Tutor Voice)',
-    'Male - Puck (သွက်လက်ဖော်ရွေသော အမျိုးသားသံ)',
-    'Male - Charon (တည်ကြည်ဩဇာရှိသော အမျိုးသားသံ)',
-    'Male - Fenrir (တက်ကြွကြည်လင်သော အမျိုးသားသံ)',
-    'Male - Orus (ပရော်ဖက်ရှင်နယ် အမျိုးသားသံ)',
-    'Female - Kore (တည်ငြိမ်ကြည်လင်သော အမျိုးသမီးသံ)',
-    'Female - Aoede (သဘာဝကျပြီး နွေးထွေးသော အမျိုးသမီးသံ)',
-    'Female - Leda (နူးညံ့ပျိုမြစ်သော အမျိုးသမီးသံ)',
-  ];
+  // Exact Google AI Studio Voice Mapping
+  final Map<String, List<String>> _voiceCategories = {
+    'Tutor': ['Bodi', 'Lumi', 'Sola', 'Varo', 'Sadaltager', 'Sulafat', 'Zephyr', 'Fola'],
+    'Podcast': ['Puck', 'Charon', 'Kore', 'Fenrir', 'Aoede'],
+    'Storyteller': ['Leda', 'Orus'],
+    'Professional': ['Charon', 'Kore', 'Aoede'],
+    'News / Broadcast': ['Fenrir', 'Puck', 'Orus'],
+  };
 
   @override
   void initState() {
@@ -153,8 +137,16 @@ class _PodcastStudioScreenState extends State<PodcastStudioScreen> {
       if (prefs is Map && mounted) {
         setState(() {
           _apiKey = (prefs['apiKey'] ?? '').toString().trim();
-          if (_styles.contains(prefs['style'])) _style = prefs['style'];
-          if (_voices.contains(prefs['voice'])) _voice = prefs['voice'];
+          
+          if (_voiceCategories.containsKey(prefs['style'])) {
+            _style = prefs['style'];
+          }
+          if (_voiceCategories[_style]!.contains(prefs['voice'])) {
+            _voice = prefs['voice'];
+          } else {
+            _voice = _voiceCategories[_style]!.first;
+          }
+          
           if (prefs['speed'] is num) _speed = (prefs['speed'] as num).toDouble().clamp(0.5, 2.0);
           if (prefs['useGem'] is bool) _useGem = prefs['useGem'];
           if (prefs['gemMode'] == 'For Point' || prefs['gemMode'] == 'For Length') {
@@ -687,31 +679,9 @@ class _PodcastStudioScreenState extends State<PodcastStudioScreen> {
     return b.toBytes();
   }
 
-  String _extractSelectedVoiceName() {
-    for (final n in [
-      'Bodi',
-      'Lumi',
-      'Sola',
-      'Varo',
-      'Sadaltager',
-      'Sulafat',
-      'Zephyr',
-      'Fola',
-      'Puck',
-      'Charon',
-      'Fenrir',
-      'Orus',
-      'Kore',
-      'Aoede',
-      'Leda',
-    ]) {
-      if (_voice.contains(n)) return n;
-    }
-    return 'Bodi';
-  }
-
   Future<Uint8List> _geminiTtsMerged(String script) async {
-    String vName = _extractSelectedVoiceName();
+    // API သို့ တိုက်ရိုက်ပေးပို့မည့် အသံနာမည် (Bodi, Puck စသည်)
+    String vName = _voice;
     final chunks = _chunkText(script, 3200);
     final pcmBuilder = BytesBuilder(copy: false);
     final client = HttpClient();
@@ -925,7 +895,7 @@ class _PodcastStudioScreenState extends State<PodcastStudioScreen> {
                         ? const SizedBox(width: 18, height: 18, child: CircularProgressIndicator(strokeWidth: 2, color: Colors.black))
                         : const Icon(Icons.auto_awesome, color: Colors.black),
                     label: Text(
-                      _busyTTS ? 'အသံဖိုင် ထုတ်လုပ်နေသည်...' : 'Podcast အသံဖိုင် ထုတ်လုပ်မည် (Generate Audio)',
+                      _busyTTS ? 'Generating Audio...' : 'Generate Podcast Audio',
                       style: const TextStyle(color: Colors.black, fontWeight: FontWeight.bold),
                     ),
                   ),
@@ -1091,30 +1061,78 @@ class _PodcastStudioScreenState extends State<PodcastStudioScreen> {
               ? const SizedBox(width: 16, height: 16, child: CircularProgressIndicator(strokeWidth: 2, color: goldAccent))
               : const Icon(Icons.translate, color: goldAccent),
           label: Text(
-            _busyScript ? 'မြန်မာ Script ပြောင်းနေသည်...' : 'မြန်မာ Podcast Script အရင်ပြောင်းမည် (Preview Script)',
+            _busyScript ? 'Translating to Burmese Script...' : 'Preview Burmese Script',
             style: const TextStyle(color: goldAccent, fontWeight: FontWeight.bold),
           ),
         ),
       ],
-      const SizedBox(height: 10),
-      DropdownButton<String>(
-        value: _style,
-        isExpanded: true,
-        items: _styles.map((s) => DropdownMenuItem(value: s, child: Text(s, style: const TextStyle(fontSize: 13)))).toList(),
-        onChanged: (v) {
-          setState(() => _style = v!);
-          _saveCfg();
-        },
+      const SizedBox(height: 16),
+      
+      // Original English Categories and Voices Dropdowns
+      Row(
+        children: [
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                const Text('Voice Style', style: TextStyle(fontSize: 12, color: Colors.white70)),
+                const SizedBox(height: 4),
+                Container(
+                  padding: const EdgeInsets.symmetric(horizontal: 12),
+                  decoration: BoxDecoration(
+                    border: Border.all(color: Colors.white24),
+                    borderRadius: BorderRadius.circular(8),
+                  ),
+                  child: DropdownButtonHideUnderline(
+                    child: DropdownButton<String>(
+                      value: _style,
+                      isExpanded: true,
+                      items: _voiceCategories.keys.map((s) => DropdownMenuItem(value: s, child: Text(s, style: const TextStyle(fontWeight: FontWeight.bold)))).toList(),
+                      onChanged: (v) {
+                        setState(() {
+                          _style = v!;
+                          _voice = _voiceCategories[v]!.first;
+                        });
+                        _saveCfg();
+                      },
+                    ),
+                  ),
+                ),
+              ],
+            ),
+          ),
+          const SizedBox(width: 12),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                const Text('Voice Name', style: TextStyle(fontSize: 12, color: Colors.white70)),
+                const SizedBox(height: 4),
+                Container(
+                  padding: const EdgeInsets.symmetric(horizontal: 12),
+                  decoration: BoxDecoration(
+                    border: Border.all(color: Colors.white24),
+                    borderRadius: BorderRadius.circular(8),
+                  ),
+                  child: DropdownButtonHideUnderline(
+                    child: DropdownButton<String>(
+                      value: _voice,
+                      isExpanded: true,
+                      items: _voiceCategories[_style]!.map((s) => DropdownMenuItem(value: s, child: Text(s))).toList(),
+                      onChanged: (v) {
+                        setState(() => _voice = v!);
+                        _saveCfg();
+                      },
+                    ),
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ],
       ),
-      DropdownButton<String>(
-        value: _voice,
-        isExpanded: true,
-        items: _voices.map((s) => DropdownMenuItem(value: s, child: Text(s, style: const TextStyle(fontSize: 13)))).toList(),
-        onChanged: (v) {
-          setState(() => _voice = v!);
-          _saveCfg();
-        },
-      ),
+      const SizedBox(height: 8),
+      
       if (_status.isNotEmpty)
         Container(
           margin: const EdgeInsets.symmetric(vertical: 8),
@@ -1144,7 +1162,7 @@ class _PodcastStudioScreenState extends State<PodcastStudioScreen> {
                 Expanded(
                   child: Text(
                     _audioPath.isEmpty
-                        ? 'In-App Audio Preview Player (အသံထုတ်ပြီးပါက နားထောင်ရန်)'
+                        ? 'In-App Audio Preview Player'
                         : 'Playing: ${_publicAudioPath.split('/').last}',
                     style: const TextStyle(color: goldAccent, fontWeight: FontWeight.bold, fontSize: 13),
                   ),
